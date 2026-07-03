@@ -150,7 +150,13 @@ class ExporterTests(unittest.TestCase):
             "application/vnd.google-apps.document",
         )
         self.assertEqual(create_call["body"]["name"], "数学I 提出状況レポート 2026-07-03")
-        self.assertIn(b"<html", create_call["media_body"].data)
+        media_body = create_call["media_body"]
+        media_bytes = (
+            media_body.data
+            if hasattr(media_body, "data")
+            else media_body.getbytes(0, media_body.size())
+        )
+        self.assertIn(b"<html", media_bytes)
         self.assertEqual(len(drive_service.permission_create_calls), 2)
         self.assertEqual(
             drive_service.permission_create_calls[0]["body"]["emailAddress"],

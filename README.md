@@ -141,9 +141,11 @@ python3 -m unittest discover -s tests
 
 疎通確認だけなら、次でコース一覧取得まで確認できます。
 
+OAuth consent screen の Audience が `External` かつ Publishing status が `Testing` の場合、実行前に利用する Google アカウントを `Google Auth platform > Audience > Test users` に追加してください。未追加だと Google 側で 403 `access_denied` になります。
+
 ```bash
-python3 -m pip install -e '.[google]'
-python3 scripts/classroom_oauth_smoke.py
+uv sync --extra google
+uv run python scripts/classroom_oauth_smoke.py
 ```
 
 ライブ提出分析の例:

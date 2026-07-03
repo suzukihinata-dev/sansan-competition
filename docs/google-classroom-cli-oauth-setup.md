@@ -67,11 +67,13 @@
 1. Google Cloud プロジェクトを作る
 2. 必要 API を有効化する
 3. OAuth consent screen を設定する
-4. CLI 検証用の Desktop app クライアントを作る
-5. `credentials.json` をローカルに置く
-6. OAuth を 1 回通して `token.json` を作る
-7. Classroom API で最低限の読み取りを確認する
-8. その取得結果を `kimu` の正規化関数へ渡す
+4. Audience が `External` かつ Publishing status が `Testing` の間は、利用する Google アカウントを `Test users` に追加する
+5. CLI 検証用の Desktop app クライアントを作る
+6. `credentials.json` をローカルに置く
+7. `uv` か任意の仮想環境で Google クライアントライブラリを入れる
+8. OAuth を 1 回通して `token.json` を作る
+9. Classroom API で最低限の読み取りを確認する
+10. その取得結果を `kimu` の正規化関数へ渡す
 
 ## 4. 有効化すべき API
 
@@ -107,16 +109,23 @@
 ## 6. CLI OAuth の最小確認手順
 
 1. Google Cloud Console で Desktop app の OAuth クライアントを作る
-2. ダウンロードした JSON を、このリポジトリ直下の `credentials.json` に置く
-3. ライブラリを入れる
-4. 疎通確認スクリプトを実行する
+2. Audience が `External` で Publishing status が `Testing` なら、`Google Auth platform > Audience > Test users` で利用する Google アカウントを追加する
+3. ダウンロードした JSON を、このリポジトリ直下の `credentials.json` に置く
+4. ライブラリを入れる
+5. 疎通確認スクリプトを実行する
 
 ```bash
-python3 -m pip install -e '.[google]'
-python3 scripts/classroom_oauth_smoke.py
+uv sync --extra google
+uv run python scripts/classroom_oauth_smoke.py
 ```
 
 初回実行時はブラウザ認証が走り、成功すると `token.json` が生成されます。
+
+補足:
+
+- macOS のシステム Python では `python3 -m pip install -e '.[google]'` が `externally-managed-environment` で失敗することがあります。このリポジトリでは `uv` を使う方が安全です。
+- Google 側で 403 `access_denied` が出る場合、コードより先に `Test users` 設定を疑うべきです。
+- OAuth app が `Testing` の間に発行される refresh token は、Google 公式仕様上 7 日で失効します。長期運用前提なら公開前でも再認証前提で扱うか、必要な verification を進める必要があります。
 
 ## 6.5 実データで提出分析を確認する
 
