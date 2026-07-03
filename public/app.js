@@ -291,6 +291,7 @@ const state = {
   editableValues: {},
   fieldErrors: {},
   selectedOutputs: new Set(["classroom", "markdown"]),
+  developerMode: false,
   posted: false,
 };
 
@@ -363,6 +364,7 @@ function normalizeAgentOutput(payload) {
     },
     errors,
     validationMessages,
+    raw: input,
   };
 }
 
@@ -806,8 +808,101 @@ function renderReview() {
         </div>
       </div>
     </section>
+    <section class="split">
+      <div class="card">
+        <h3>契約チェック</h3>
+        ${renderContractChecklist()}
+      </div>
+      <div class="card">
+        <h3>承認アクション</h3>
+        ${renderApprovalActions()}
+      </div>
+    </section>
     <section class="band">
       ${output.gui.tables.length > 0 ? output.gui.tables.map(renderAgentTableSection).join("") : renderInlineEmpty("表形式のデータはありません。")}
+    </section>
+    ${renderDeveloperPanel()}
+  `;
+}
+
+function renderContractChecklist() {
+  const checks = [
+    ["schemaVersion", state.agentOutput.schemaVersion === "1.0.0"],
+    ["summary", Boolean(state.agentOutput.summary.title)],
+    ["gui.cards", Array.isArray(state.agentOutput.gui.cards)],
+    ["gui.tables", Array.isArray(state.agentOutput.gui.tables)],
+    ["gui.warnings", Array.isArray(state.agentOutput.gui.warnings)],
+    ["gui.editableFields", Array.isArray(state.agentOutput.gui.editableFields)],
+    ["outputs.markdown", "markdown" in state.agentOutput.outputs],
+    ["outputs.pdf", "pdf" in state.agentOutput.outputs],
+    ["outputs.googleDocument", "googleDocument" in state.agentOutput.outputs],
+    ["outputs.classroomReminder", "classroomReminder" in state.agentOutput.outputs],
+    ["approval.actions", Array.isArray(state.agentOutput.approval.actions)],
+    ["errors", Array.isArray(state.agentOutput.errors)],
+  ];
+  return `
+    <ul class="contract-list">
+      ${checks
+        .map(
+          ([label, passed]) => `
+            <li class="${passed ? "passed" : "failed"}">
+              <span aria-hidden="true">${passed ? "✓" : "!"}</span>
+              <span>${escapeHtml(label)}</span>
+            </li>
+          `,
+        )
+        .join("")}
+    </ul>
+  `;
+}
+
+function renderApprovalActions() {
+  if (state.agentOutput.approval.actions.length === 0) {
+    return renderInlineEmpty("承認対象のアクションはありません。");
+  }
+  return `
+    <div class="approval-list">
+      ${state.agentOutput.approval.actions
+        .map(
+          (action) => `
+            <article class="approval-action">
+              <div>
+                <h4>${escapeHtml(action.label ?? action.type ?? "承認アクション")}</h4>
+                <p class="subtle">${escapeHtml(action.type ?? "")}</p>
+              </div>
+              <div class="approval-meta">
+                ${action.requiresConfirmation ? '<span class="badge danger">確認必須</span>' : '<span class="badge">確認不要</span>'}
+                <span class="badge">${escapeHtml(action.payloadRef ?? "payload未指定")}</span>
+              </div>
+            </article>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderDeveloperPanel() {
+  return `
+    <section class="card developer-panel">
+      <div class="section-heading">
+        <h2>開発者モード</h2>
+        <button class="button" data-action="toggle-developer">${state.developerMode ? "閉じる" : "開く"}</button>
+      </div>
+      ${
+        state.developerMode
+          ? `<div class="developer-grid">
+              <div>
+                <h3>Raw JSON</h3>
+                <pre class="json-preview">${escapeHtml(JSON.stringify(state.agentOutput.raw, null, 2))}</pre>
+              </div>
+              <div>
+                <h3>Normalized JSON</h3>
+                <pre class="json-preview">${escapeHtml(JSON.stringify({ ...state.agentOutput, raw: undefined }, null, 2))}</pre>
+              </div>
+            </div>`
+          : '<p class="subtle">AIアウトプットJSONは開発者モードでのみ直接表示します。</p>'
+      }
     </section>
   `;
 }
@@ -1077,6 +1172,13 @@ function bindEvents() {
   document.querySelectorAll("[data-action='retry']").forEach((button) => {
     button.addEventListener("click", () => {
       applyScenario("ready");
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-action='toggle-developer']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.developerMode = !state.developerMode;
       render();
     });
   });

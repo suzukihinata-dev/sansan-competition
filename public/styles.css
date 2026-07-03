@@ -335,6 +335,92 @@ button {
   color: var(--muted);
 }
 
+.contract-list {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.contract-list li {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.contract-list li span:first-child {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.contract-list li.passed span:first-child {
+  background: #ecfdf3;
+  color: var(--success);
+}
+
+.contract-list li.failed span:first-child {
+  background: #fff4f2;
+  color: var(--danger);
+}
+
+.approval-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.approval-action {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.approval-action h4 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.approval-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.developer-panel {
+  overflow: hidden;
+}
+
+.developer-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.json-preview {
+  overflow: auto;
+  max-height: 420px;
+  margin: 10px 0 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #111827;
+  color: #f9fafb;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .band {
   display: grid;
   gap: 16px;
@@ -738,7 +824,8 @@ tr:last-child td {
   .grid.cols-2,
   .grid.cols-3,
   .split,
-  .review-layout {
+  .review-layout,
+  .developer-grid {
     grid-template-columns: 1fr;
   }
 

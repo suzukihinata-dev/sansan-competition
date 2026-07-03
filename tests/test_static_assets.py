@@ -29,6 +29,11 @@ class StaticAssetTests(unittest.TestCase):
             "partial_success",
             "CLASSROOM_API_PERMISSION_DENIED",
             "data-action=\"retry\"",
+            "data-action=\"toggle-developer\"",
+            "renderContractChecklist",
+            "renderApprovalActions",
+            "Raw JSON",
+            "Normalized JSON",
             "aria-current=\"page\"",
             "aria-invalid=\"true\"",
         ]:
@@ -44,6 +49,10 @@ class StaticAssetTests(unittest.TestCase):
             ".error-item",
             ".field-error",
             ".skeleton",
+            ".contract-list",
+            ".approval-action",
+            ".developer-panel",
+            ".json-preview",
         ]:
             with self.subTest(term=term):
                 self.assertIn(term, styles)
