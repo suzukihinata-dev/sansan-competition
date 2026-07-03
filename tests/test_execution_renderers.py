@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import tempfile
 import unittest
@@ -12,6 +13,10 @@ from sansan_competition.execution.renderers import (
     render_markdown,
     render_pdf,
 )
+
+# PDF生成は reportlab に依存し、未導入環境では AgentError で優雅に劣化する設計。
+# その環境では PDF レンダリングの成功を前提とするテストをスキップする。
+_HAS_REPORTLAB = importlib.util.find_spec("reportlab") is not None
 
 SAMPLE = (
     Path(__file__).resolve().parent.parent
@@ -39,6 +44,7 @@ class RendererTests(unittest.TestCase):
                 render_markdown({"fileName": "a.md"}, tmp)
             self.assertEqual(ctx.exception.code, ErrorCode.INVALID_AGENT_OUTPUT)
 
+    @unittest.skipUnless(_HAS_REPORTLAB, "reportlab not installed")
     def test_pdf_written(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = render_pdf(_outputs()["pdf"], tmp)
