@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,6 +12,12 @@ dependencies = [
     "reportlab>=4.0",
 ]
 
+[project.optional-dependencies]
+google = [
+    "google-api-python-client",
+    "google-auth-httplib2",
+    "google-auth-oauthlib",
+]
 [tool.setuptools]
 packages = ["sansan_competition"]
 py-modules = ["main"]

@@ -4,6 +4,7 @@ import unittest
 
 from sansan_competition.normalization import (
     normalize_coursework,
+    normalize_submission,
     normalize_submission_batch,
 )
 
@@ -46,6 +47,37 @@ class NormalizationTests(unittest.TestCase):
         self.assertEqual(len(submissions), 1)
         self.assertEqual(len(issues), 1)
         self.assertEqual(issues[0].code, "PARTIAL_CLASSROOM_DATA")
+
+    def test_normalize_submission_supports_classroom_nested_shapes(self) -> None:
+        submission = normalize_submission(
+            {
+                "id": "sub_001",
+                "courseId": "course_001",
+                "courseWorkId": "cw_001",
+                "userId": "student_001",
+                "state": "TURNED_IN",
+                "updateTime": "2026-07-05T11:45:00Z",
+                "submissionHistory": [
+                    {
+                        "stateHistory": {
+                            "state": "TURNED_IN",
+                            "stateTimestamp": "2026-07-05T10:30:00Z",
+                            "actorUserId": "student_001",
+                        }
+                    }
+                ],
+                "assignmentSubmission": {
+                    "attachments": [{"driveFile": {"id": "file_001"}}]
+                },
+            }
+        )
+
+        self.assertEqual(submission.student_id, "student_001")
+        self.assertEqual(
+            submission.submitted_at.isoformat(timespec="minutes"),
+            "2026-07-05T19:30+09:00",
+        )
+        self.assertEqual(len(submission.attachments), 1)
 
 
 if __name__ == "__main__":

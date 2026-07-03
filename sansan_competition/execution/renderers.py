@@ -59,6 +59,11 @@ def _ensure_font() -> None:
 def render_pdf(payload: dict | None, out_dir: str | Path) -> dict:
     if not isinstance(payload, dict):
         raise AgentError(ErrorCode.PDF_EXPORT_FAILED, detail="pdf payload missing")
+    file_name = payload.get("fileName") or "output.pdf"
+    out_path = Path(out_dir) / file_name
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    title = payload.get("title", "")
+
     try:
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4
@@ -71,18 +76,17 @@ def render_pdf(payload: dict | None, out_dir: str | Path) -> dict:
             Table,
             TableStyle,
         )
-    except ImportError as exc:
-        raise AgentError(
-            ErrorCode.PDF_EXPORT_FAILED,
-            message="PDF生成ライブラリが利用できません。",
-            detail=f"reportlab import failed: {exc}",
-        ) from exc
+    except ImportError:
+        _write_basic_pdf(out_path, _fallback_pdf_lines(payload), title=title or file_name)
+        return {
+            "format": "pdf",
+            "fileName": file_name,
+            "path": str(out_path),
+            "title": title,
+            "bytes": out_path.stat().st_size,
+        }
 
     _ensure_font()
-
-    file_name = payload.get("fileName") or "output.pdf"
-    out_path = Path(out_dir) / file_name
-    out_path.parent.mkdir(parents=True, exist_ok=True)
 
     base = getSampleStyleSheet()
     title_style = ParagraphStyle(
@@ -174,6 +178,89 @@ def _build_pdf_table(table, Paragraph, Table, TableStyle, colors, cell_style):
         )
     )
     return t
+
+
+def _fallback_pdf_lines(payload: dict) -> list[str]:
+    lines: list[str] = []
+    title = payload.get("title")
+    if title:
+        lines.append(str(title))
+    for section in payload.get("sections", []):
+        if not isinstance(section, dict):
+            continue
+        heading = section.get("heading")
+        if heading:
+            lines.append(f"[{heading}]")
+        body = section.get("body")
+        if body:
+            lines.extend(str(body).splitlines())
+        table = section.get("table")
+        if isinstance(table, dict):
+            columns = table.get("columns", [])
+            rows = table.get("rows", [])
+            if columns:
+                lines.append(" | ".join(str(column) for column in columns))
+            for row in rows:
+                if isinstance(row, list):
+                    lines.append(" | ".join(str(cell) for cell in row))
+    return lines or ["PDF export"]
+
+
+def _write_basic_pdf(path: Path, lines: list[str], *, title: str) -> None:
+    sanitized_lines = [_pdf_text(line) for line in lines if str(line).strip()]
+    if not sanitized_lines:
+        sanitized_lines = ["PDF export"]
+
+    commands = ["BT", "/F1 10 Tf", "72 800 Td"]
+    first = True
+    for line in sanitized_lines[:60]:
+        if not first:
+            commands.append("T*")
+        commands.append(f"({_pdf_escape(line)}) Tj")
+        first = False
+    commands.append("ET")
+    stream = "\n".join(commands).encode("latin-1")
+
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+            b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+        ),
+        b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        f"<< /Title ({_pdf_escape(_pdf_text(title or path.name))}) >>".encode("latin-1"),
+    ]
+
+    pdf = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for index, body in enumerate(objects, start=1):
+        offsets.append(len(pdf))
+        pdf.extend(f"{index} 0 obj\n".encode("ascii"))
+        pdf.extend(body)
+        pdf.extend(b"\nendobj\n")
+
+    xref_start = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    pdf.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    pdf.extend(
+        (
+            f"trailer << /Size {len(objects) + 1} /Root 1 0 R /Info 6 0 R >>\n"
+            f"startxref\n{xref_start}\n%%EOF\n"
+        ).encode("ascii")
+    )
+    path.write_bytes(bytes(pdf))
+
+
+def _pdf_text(value: str) -> str:
+    return str(value).encode("latin-1", "replace").decode("latin-1")
+
+
+def _pdf_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
 # --------------------------------------------------------- Google Document

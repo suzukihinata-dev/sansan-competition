@@ -69,7 +69,6 @@ class PrAutomationTests(unittest.TestCase):
 
             self.assertTrue(result.passed)
             self.assertTrue(any("help output valid" in detail for detail in result.details))
-
     def test_build_report_apply_fixes_cleans_post_check_cache(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

@@ -86,17 +86,13 @@ def normalize_submission(
     resolved_student_name = student_name or _optional_str(raw, "studentName", default="")
     state = _required_str(raw, "state")
 
-    submitted_at = _parse_rfc3339(
-        raw.get("submissionTime")
-        or raw.get("submittedAt")
-        or raw.get("turnInTime")
-    )
+    submitted_at = _parse_rfc3339(_submitted_at_value(raw))
     updated_at = _parse_rfc3339(raw.get("updateTime") or raw.get("updatedAt"))
 
     late = bool(raw.get("late", False))
     assigned_grade = _optional_number(raw, "assignedGrade")
     draft_grade = _optional_number(raw, "draftGrade")
-    attachments = _optional_list(raw, "attachments")
+    attachments = _submission_attachments(raw)
 
     return StudentSubmission(
         student_submission_id=student_submission_id,
@@ -187,6 +183,60 @@ def _optional_list(raw: Mapping[str, Any], key: str) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         raise ValueError(f"Field {key} must be a list.")
     return [item for item in value if isinstance(item, dict)]
+
+
+def _submission_attachments(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
+    direct_attachments = raw.get("attachments")
+    if isinstance(direct_attachments, list):
+        return [item for item in direct_attachments if isinstance(item, dict)]
+
+    assignment_submission = raw.get("assignmentSubmission")
+    if isinstance(assignment_submission, Mapping):
+        nested_attachments = assignment_submission.get("attachments")
+        if isinstance(nested_attachments, list):
+            return [item for item in nested_attachments if isinstance(item, dict)]
+
+    return []
+
+
+def _submitted_at_value(raw: Mapping[str, Any]) -> Any:
+    explicit_value = (
+        raw.get("submissionTime")
+        or raw.get("submittedAt")
+        or raw.get("turnInTime")
+    )
+    if explicit_value is not None:
+        return explicit_value
+
+    state_timestamp = _latest_submission_state_timestamp(raw.get("submissionHistory"))
+    if state_timestamp is not None:
+        return state_timestamp
+
+    state = str(raw.get("state") or "").strip()
+    if state in {"TURNED_IN", "RETURNED"}:
+        return raw.get("updateTime") or raw.get("updatedAt")
+    return None
+
+
+def _latest_submission_state_timestamp(value: Any) -> str | None:
+    if not isinstance(value, list):
+        return None
+
+    timestamps: list[str] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        state_history = item.get("stateHistory")
+        if not isinstance(state_history, Mapping):
+            continue
+        state = str(state_history.get("state") or "").strip()
+        timestamp = state_history.get("stateTimestamp")
+        if state in {"TURNED_IN", "RETURNED"} and isinstance(timestamp, str) and timestamp.strip():
+            timestamps.append(timestamp.strip())
+
+    if not timestamps:
+        return None
+    return max(timestamps)
 
 
 def _parse_due_fields(

@@ -1003,6 +1003,54 @@ def remove_cache_artifacts(paths: Sequence[Path]) -> list[str]:
         removed.append(str(path))
     return removed
 
+def validate_common_contract(payload: dict[str, Any]) -> list[str]:
+    issues = validate_agent_output_dict(payload)
+
+    missing_top_level = COMMON_TOP_LEVEL_KEYS - payload.keys()
+    if missing_top_level:
+        issues.append(
+            "missing common top-level keys: "
+            + ", ".join(sorted(missing_top_level))
+        )
+
+    course = payload.get("course")
+    if not isinstance(course, dict):
+        issues.append("course must be an object")
+
+    gui = payload.get("gui")
+    if not isinstance(gui, dict):
+        issues.append("gui must be an object")
+    else:
+        missing_gui = COMMON_GUI_KEYS - gui.keys()
+        if missing_gui:
+            issues.append("gui missing keys: " + ", ".join(sorted(missing_gui)))
+
+    outputs = payload.get("outputs")
+    if not isinstance(outputs, dict):
+        issues.append("outputs must be an object")
+    else:
+        missing_outputs = COMMON_OUTPUT_KEYS - outputs.keys()
+        if missing_outputs:
+            issues.append(
+                "outputs missing keys: " + ", ".join(sorted(missing_outputs))
+            )
+
+    approval = payload.get("approval")
+    if not isinstance(approval, dict):
+        issues.append("approval must be an object")
+    else:
+        missing_approval = COMMON_APPROVAL_KEYS - approval.keys()
+        if missing_approval:
+            issues.append(
+                "approval missing keys: " + ", ".join(sorted(missing_approval))
+            )
+
+    errors = payload.get("errors")
+    if not isinstance(errors, list):
+        issues.append("errors must be an array")
+
+    return issues
+
 
 def run_command(args: Sequence[str], *, repo_root: Path) -> tuple[int, str]:
     pythonpath = os.environ.get("PYTHONPATH", "")

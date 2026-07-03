@@ -150,6 +150,41 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(payload["facts"]["submissions"], [])
         self.assertEqual(payload["privacy"]["studentIdentifierMode"], "pseudonymized_student_ref_only")
 
+    def test_short_answer_submission_is_not_flagged_as_attachment_missing(self) -> None:
+        short_answer_work = normalize_coursework(
+            {
+                "id": "cw_short",
+                "courseId": "course_001",
+                "title": "確認問題",
+                "workType": "SHORT_ANSWER_QUESTION",
+                "dueDate": "2026-07-05",
+                "dueTime": "12:00",
+            }
+        )
+        submissions, issues = normalize_submission_batch(
+            [
+                {
+                    "id": "sub_short",
+                    "courseId": "course_001",
+                    "courseWorkId": "cw_short",
+                    "studentId": "student_001",
+                    "studentName": "山田太郎",
+                    "state": "TURNED_IN",
+                    "shortAnswerSubmission": {"answer": "x=2"},
+                }
+            ]
+        )
+
+        analysis = analyze_submissions(
+            self.course,
+            short_answer_work,
+            submissions,
+            now=datetime(2026, 7, 5, 9, 0, tzinfo=JST),
+            normalization_issues=issues,
+        )
+
+        self.assertEqual(analysis.counts()["attachmentMissingPossibleCount"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

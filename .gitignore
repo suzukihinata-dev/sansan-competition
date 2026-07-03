@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+credentials.json
+token.json
+exports/
 
 # venv
 .venv/

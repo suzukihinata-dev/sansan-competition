@@ -21,7 +21,8 @@ python3 main.py --port 8000
 - 出力形式選択
 - Classroom投稿前の承認画面
 
-Google OAuth、Classroom API、AI生成処理、実際のPDF/Markdown/Google Document出力は未接続です。
+GUI プロトタイプ自体には、Google OAuth、Classroom API、AI生成処理、実際のPDF/Markdown/Google Document出力はまだ接続していません。
+一方で、リポジトリ全体としては CLI ベースの Google Classroom/OAuth 連携と Markdown/Google Document 実出力ヘルパーを含みます。
 
 ## PR Automation
 
@@ -82,13 +83,13 @@ Optional overrides:
 ## 設計上の前提
 
 - エラー時も GUI の分岐を減らすため、`gui` / `outputs` / `approval` を空で返す固定形にしています。
-- `添付不足の可能性` は、`ASSIGNMENT` または `SHORT_ANSWER_QUESTION` で `TURNED_IN` / `RETURNED` だが添付ゼロの場合のヒューリスティックです。実際の提出内容確認は別途必要です。
+- `添付不足の可能性` は、現状では `ASSIGNMENT` で `TURNED_IN` / `RETURNED` だが添付ゼロの場合のヒューリスティックです。実際の提出内容確認は別途必要です。
 - `partial_success` を導入し、一部データだけ正規化できたケースを `errors` と `warnings` に残します。
 
 ## 実行例
 
 ```bash
-python3 main.py demo
+python3 main.py
 ```
 
 AI 入力サンプルの確認:
@@ -111,6 +112,63 @@ python3 main.py sample-partial-reminder
 python3 -m unittest discover -s tests
 ```
 
+## Google Classroom / OAuth
+
+このブランチには、CLI ベースの Google OAuth と Classroom API 連携の土台を追加しています。
+
+- `scripts/classroom_oauth_smoke.py`
+  - OAuth を通してコース一覧取得を確認
+- `scripts/classroom_fetch_analysis.py`
+  - Classroom 実データを取得し、`kimu` の共通 JSON 契約へ変換
+- `scripts/classroom_post_reminder.py`
+  - 承認済みの `classroomReminder` payload を Classroom に投稿
+- `scripts/export_outputs.py`
+  - `outputs.markdown` の保存と `outputs.googleDocument` の実 Google Document 化
+- `sansan_competition/oauth.py`
+  - OAuth 認証と Google API service 構築
+- `sansan_competition/classroom.py`
+  - Classroom 取得、正規化接続、投稿変換
+- `sansan_competition/exporters.py`
+  - Markdown 保存と Drive API による Google Document 作成
+
+まだ入っていないもの:
+
+- Web GUI 用の Google ログイン画面
+- フロントエンドからの OAuth コールバック処理
+- PDF の実バイナリ生成
+
+`kimu` 担当の正規化・契約・判定ロジックはサンプル入力だけでも進められますが、MVP 全体では OAuth と Classroom 取得は必須です。セットアップ方針と CLI の疎通確認手順は [docs/google-classroom-cli-oauth-setup.md](/Users/kimura/Desktop/SP活動/2年/後期/sansan-competition/docs/google-classroom-cli-oauth-setup.md) にまとめました。
+
+疎通確認だけなら、次でコース一覧取得まで確認できます。
+
+```bash
+python3 -m pip install -e '.[google]'
+python3 scripts/classroom_oauth_smoke.py
+```
+
+ライブ提出分析の例:
+
+```bash
+python3 scripts/classroom_fetch_analysis.py --course-id YOUR_COURSE_ID --course-work-id YOUR_COURSEWORK_ID
+```
+
+承認済みリマインド投稿の例:
+
+```bash
+python3 scripts/classroom_post_reminder.py --input samples/reminder_generation_success.json --approved
+```
+
+Markdown 保存の例:
+
+```bash
+python3 scripts/export_outputs.py --input samples/submission_analysis_success.json --format markdown --output-dir exports
+```
+
+Google Document 作成の例:
+
+```bash
+python3 scripts/export_outputs.py --input samples/submission_analysis_success.json --format googleDocument
+```
 ## Review And Merge Scope Agent
 
 Run the review-triggered implementation agent once:
