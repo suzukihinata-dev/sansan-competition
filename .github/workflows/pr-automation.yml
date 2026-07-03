@@ -20,13 +20,12 @@ concurrency:
 
 jobs:
   review-loop:
-    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - name: Check out pull request head
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Set up Python
@@ -54,6 +53,7 @@ jobs:
 
       - name: Commit auto-fixes
         id: commit
+        if: github.event.pull_request.head.repo.full_name == github.repository
         run: |
           if git diff --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"

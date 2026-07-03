@@ -8,6 +8,7 @@ GitHub Actions based PR automation lives in [`.github/workflows/pr-automation.ym
 - Loop: auto-fix cache artifacts, rerun validation, post a PR report comment
 - Pass condition: `pytest`, CLI sample generation, and shared JSON contract checks all pass
 - Merge behavior: by default the workflow stops at a review result; add the `automerge` label to allow squash merge after a green run
+- Fork PRs: validation and report comments run, but auto-fix commits are only pushed for same-repository branches
 
 Local dry-run:
 
