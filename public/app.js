@@ -296,6 +296,16 @@ const state = {
 
 const app = document.querySelector("#app");
 
+const workflowSteps = [
+  ["login", "ログイン"],
+  ["courses", "コース"],
+  ["dashboard", "概要"],
+  ["assignment", "課題"],
+  ["review", "AI確認"],
+  ["exports", "出力"],
+  ["confirm", "承認"],
+];
+
 resetEditableValues();
 render();
 
@@ -399,6 +409,7 @@ function renderLogin() {
   return `
     <main class="login">
       <section class="login-panel">
+        <p class="login-kicker">Google Classroom operations</p>
         <h1>Classroom運用支援</h1>
         <p class="subtle">Google Classroomの提出状況を確認し、AIの提案を教師が編集・承認してから投稿します。</p>
         <ul class="check-list">
@@ -420,22 +431,33 @@ function renderShell() {
           <span class="brand-mark">C</span>
           <span>Classroom支援</span>
         </div>
+        <div class="sidebar-context">
+          <strong>${escapeHtml(selectedCourse().name)}</strong>
+          <span class="subtle">${escapeHtml(selectedCourse().section)} / ${selectedCourse().studentCount}名</span>
+        </div>
         <nav class="nav" aria-label="主画面">
-          ${navButton("courses", "コース", "コース選択")}
-          ${navButton("dashboard", "概要", "ダッシュボード")}
-          ${navButton("assignment", "課題", "課題詳細")}
-          ${navButton("review", "AI", "出力確認")}
-          ${navButton("exports", "出力", "出力選択")}
-          ${navButton("confirm", "承認", "投稿確認")}
+          ${navButton("courses", "01", "コース選択")}
+          ${navButton("dashboard", "02", "ダッシュボード")}
+          ${navButton("assignment", "03", "課題詳細")}
+          ${navButton("review", "04", "出力確認")}
+          ${navButton("exports", "05", "出力選択")}
+          ${navButton("confirm", "06", "投稿確認")}
         </nav>
       </aside>
       <main class="main">
         <header class="topbar">
           <div>
             <h1>${pageTitle()}</h1>
-            <div class="subtle">${escapeHtml(selectedCourse().name)} / ${escapeHtml(selectedCourse().section)}</div>
+            <div class="meta-row">
+              <span class="badge">${escapeHtml(selectedCourse().name)} / ${escapeHtml(selectedCourse().section)}</span>
+              <span class="subtle">生成 ${formatGeneratedAt(state.agentOutput.generatedAt)}</span>
+              <span class="badge ${statusBadgeClass(state.agentOutput.status)}">${statusLabel(state.agentOutput.status)}</span>
+            </div>
           </div>
-          <button class="button" data-action="logout">ログアウト</button>
+          <div class="action-row">
+            <button class="button ghost" data-action="retry">再取得</button>
+            <button class="button" data-action="logout">ログアウト</button>
+          </div>
         </header>
         <div class="content" aria-live="polite">
           ${renderScenarioControl()}
@@ -451,6 +473,25 @@ function navButton(view, icon, label) {
   const active = state.view === view ? " active" : "";
   const current = state.view === view ? ' aria-current="page"' : "";
   return `<button class="nav-button${active}" data-view="${view}"${current}><span>${icon}</span><span>${label}</span></button>`;
+}
+
+function formatGeneratedAt(value) {
+  return value ? value.replace("T", " ").replace("+09:00", "") : "未生成";
+}
+
+function statusLabel(status) {
+  const labels = {
+    success: "正常",
+    partial_success: "部分成功",
+    error: "失敗",
+  };
+  return labels[status] ?? "不明";
+}
+
+function statusBadgeClass(status) {
+  if (status === "success") return "success";
+  if (status === "partial_success") return "warning";
+  return "danger";
 }
 
 function pageTitle() {
@@ -475,6 +516,7 @@ function renderScenarioControl() {
   ];
   return `
     <section class="toolbar" aria-label="データ状態">
+      ${renderWorkflow()}
       <div class="segmented" role="group" aria-label="データ状態">
         ${modes
           .map(
@@ -487,6 +529,22 @@ function renderScenarioControl() {
           .join("")}
       </div>
     </section>
+  `;
+}
+
+function renderWorkflow() {
+  const currentIndex = workflowSteps.findIndex(([view]) => view === state.view);
+  return `
+    <div class="workflow" aria-label="業務フロー">
+      ${workflowSteps
+        .map(([view, label], index) => {
+          const active = view === state.view || (view === "login" && !state.isLoggedIn);
+          const done = state.isLoggedIn && index < currentIndex;
+          const className = `workflow-step${active ? " active" : ""}${done ? " done" : ""}`;
+          return `<span class="${className}">${index + 1}. ${label}</span>`;
+        })
+        .join("")}
+    </div>
   `;
 }
 
@@ -585,15 +643,21 @@ function renderCourses() {
   return `
     <section class="band">
       <div class="section-heading">
-        <h2>担当コース</h2>
-        <span class="subtle">モックデータ</span>
+        <div>
+          <h2>担当コース</h2>
+          <p class="subtle">教師が確認対象のコースを選び、提出状況のダッシュボードへ進みます。</p>
+        </div>
+        <span class="badge">モックデータ</span>
       </div>
       <div class="grid cols-2">
         ${courses
           .map(
             (course) => `
-              <article class="card">
-                <h3>${escapeHtml(course.name)}</h3>
+              <article class="card ${course.courseId === state.selectedCourseId ? "selected" : ""}">
+                <div class="card-header">
+                  <h3>${escapeHtml(course.name)}</h3>
+                  ${course.courseId === state.selectedCourseId ? '<span class="badge success">選択中</span>' : ""}
+                </div>
                 <p class="subtle">${escapeHtml(course.section)} / ${course.studentCount}名 / 更新 ${escapeHtml(course.updatedAt)}</p>
                 <div class="action-row" style="margin-top: 16px">
                   <button class="button primary" data-course="${course.courseId}">このコースを開く</button>
@@ -612,29 +676,35 @@ function renderDashboard() {
   return `
     <section class="band">
       <div class="grid cols-3">
-        ${metricCard("未提出課題", "2", "対応が必要な課題数")}
-        ${metricCard("期限接近", "1", "3日以内に締切の課題")}
-        ${metricCard("最近のお知らせ", "4", "直近7日間の投稿")}
+        ${metricCard("未提出課題", String(assignments.length), "対応が必要な課題数", "danger")}
+        ${metricCard("期限接近", "1", "3日以内に締切の課題", "warning")}
+        ${metricCard("最近のお知らせ", "4", "直近7日間の投稿", "success")}
       </div>
     </section>
     <section class="band">
       <div class="section-heading">
-        <h2>最近の課題</h2>
+        <div>
+          <h2>最近の課題</h2>
+          <p class="subtle">Classroomから取得した事実データをもとに、対応優先度を確認します。</p>
+        </div>
         <button class="button" data-view="assignment">課題詳細へ</button>
       </div>
       ${renderAssignmentTable([assignment])}
     </section>
     <section class="card">
-      <h3>AIによる注意点</h3>
+      <div class="card-header">
+        <h3>AIによる注意点</h3>
+        <span class="badge warning">提案</span>
+      </div>
       <p>${escapeHtml(state.agentOutput.summary.shortSummary)}</p>
       <p class="subtle">${escapeHtml(state.agentOutput.summary.recommendedAction)}</p>
     </section>
   `;
 }
 
-function metricCard(title, value, description) {
+function metricCard(title, value, description, tone = "") {
   return `
-    <article class="card metric">
+    <article class="card metric ${tone}">
       <h3>${escapeHtml(title)}</h3>
       <div class="metric-value">${escapeHtml(value)}</div>
       <p class="subtle">${escapeHtml(description)}</p>
@@ -647,7 +717,10 @@ function renderAssignment() {
   return `
     <section class="band">
       <div class="section-heading">
-        <h2>課題一覧</h2>
+        <div>
+          <h2>課題一覧</h2>
+          <p class="subtle">提出済み、未提出、遅延を横並びで確認し、AI生成対象の課題を選びます。</p>
+        </div>
         <button class="button primary" data-action="generate-reminder">リマインド文を生成</button>
       </div>
       ${renderAssignmentTable(assignments)}
@@ -680,13 +753,16 @@ function renderAssignmentTable(items) {
           ${items
             .map(
               (item) => `
-                <tr>
+                <tr class="${item.courseWorkId === state.selectedAssignmentId ? "selected-row" : ""}">
                   <td>${escapeHtml(item.title)}</td>
                   <td>${escapeHtml(item.dueDate)} ${escapeHtml(item.dueTime)}</td>
                   <td><span class="badge success">${item.turnedIn}</span></td>
                   <td><span class="badge danger">${item.missing}</span></td>
                   <td><span class="badge warning">${item.late}</span></td>
-                  <td>${escapeHtml(item.state)}</td>
+                  <td>
+                    <span class="badge">${escapeHtml(item.state)}</span>
+                    <button class="button ghost compact" data-assignment="${item.courseWorkId}">選択</button>
+                  </td>
                 </tr>
               `,
             )
@@ -706,18 +782,24 @@ function renderReview() {
         <span class="badge">${escapeHtml(output.schemaVersion)}</span>
       </div>
       ${output.gui.cards.length > 0 ? `<div class="grid cols-3">${output.gui.cards
-        .map((card) => metricCard(card.title, card.value, card.description))
+        .map((card, index) => metricCard(card.title, card.value, card.description, ["danger", "warning", "success"][index] ?? ""))
         .join("")}</div>` : renderInlineEmpty("カード表示用データはありません。")}
     </section>
-    <section class="split">
+    <section class="review-layout">
       <div class="card">
-        <h3>編集</h3>
+        <div class="card-header">
+          <h3>編集</h3>
+          <span class="badge">教師確認</span>
+        </div>
         <div class="grid" style="margin-top: 14px">
           ${output.gui.editableFields.length > 0 ? output.gui.editableFields.map(renderEditableField).join("") : renderInlineEmpty("編集可能な項目はありません。")}
         </div>
       </div>
       <div class="card">
-        <h3>警告とエラー</h3>
+        <div class="card-header">
+          <h3>警告とエラー</h3>
+          <span class="badge warning">投稿前確認</span>
+        </div>
         <div class="warning-list" style="margin-top: 14px">
           ${renderWarnings()}
           ${renderErrors()}
@@ -844,7 +926,10 @@ function renderExports() {
           .map(
             ([key, title, description, available]) => `
               <label class="card output-option ${available ? "" : "disabled"}">
-                <input type="checkbox" data-output="${key}" ${state.selectedOutputs.has(key) ? "checked" : ""} ${available ? "" : "disabled"} />
+                <div class="card-header">
+                  <input type="checkbox" data-output="${key}" ${state.selectedOutputs.has(key) ? "checked" : ""} ${available ? "" : "disabled"} />
+                  <span class="badge ${available ? "success" : "warning"}">${available ? "利用可" : "未生成"}</span>
+                </div>
                 <h3 style="margin-top: 12px">${title}</h3>
                 <p class="subtle">${description}</p>
               </label>
@@ -884,11 +969,16 @@ function renderConfirm() {
       </div>
     </section>
     <section class="card">
-      <h3>${escapeHtml(title || "投稿タイトル未入力")}</h3>
+      <div class="card-header">
+        <h3>${escapeHtml(title || "投稿タイトル未入力")}</h3>
+        <span class="badge danger">未承認</span>
+      </div>
       <p>${escapeHtml(body || "投稿本文未入力")}</p>
     </section>
-    <section class="warning-list">
-      <div class="warning-item">${escapeHtml(state.agentOutput.approval.reason || "承認対象の操作はありません。")}</div>
+    <section class="approval-summary">
+      <strong>承認条件</strong>
+      <span>${escapeHtml(state.agentOutput.approval.reason || "承認対象の操作はありません。")}</span>
+      <span class="subtle">教師が内容を確認し、投稿ボタンを押すまで Classroom への投稿は実行されません。</span>
     </section>
     <section class="action-row">
       <button class="button primary" data-action="approve-post" ${state.posted || !canPost ? "disabled" : ""}>投稿する</button>
@@ -965,6 +1055,13 @@ function bindEvents() {
     button.addEventListener("click", () => {
       state.selectedCourseId = button.dataset.course;
       state.view = "dashboard";
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-assignment]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedAssignmentId = button.dataset.assignment;
       render();
     });
   });
