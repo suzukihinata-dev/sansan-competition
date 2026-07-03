@@ -61,9 +61,8 @@ def load_google_user_credentials(
     except ImportError as exc:
         raise RuntimeError(
             "Missing Google client libraries. Install them with "
-            "`python3 -m pip install -e '.[google]'` or "
-            "`python3 -m pip install --upgrade google-api-python-client "
-            "google-auth-httplib2 google-auth-oauthlib`."
+            "`uv sync --extra google` and run this project with "
+            "`uv run python ...`."
         ) from exc
 
     if not resolved_config.credentials_path.exists():
@@ -175,6 +174,7 @@ def build_google_service(
     except ImportError as exc:
         raise RuntimeError(
             "Missing Google API discovery client. Install it with "
-            "`python3 -m pip install -e '.[google]'`."
+            "`uv sync --extra google` and run this project with "
+            "`uv run python ...`."
         ) from exc
     return build(api_name, version, credentials=creds)
