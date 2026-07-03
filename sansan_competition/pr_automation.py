@@ -312,6 +312,12 @@ def build_report(repo_root: Path, *, apply_fixes: bool) -> AutomationReport:
         run_cli_contract_checks(repo_root),
         run_agent_task_contract_checks(),
     ]
+
+    if apply_fixes:
+        cache_artifacts = collect_cache_artifacts(repo_root)
+        removed = remove_cache_artifacts(cache_artifacts)
+        fixes_applied.extend(f"removed {path}" for path in removed)
+
     return AutomationReport(fixes_applied=fixes_applied, checks=checks)
 
 
