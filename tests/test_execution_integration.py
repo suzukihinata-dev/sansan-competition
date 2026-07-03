@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import tempfile
 import unittest
 from datetime import datetime
@@ -26,6 +27,9 @@ from sansan_competition.execution.google_auth import (
 )
 from sansan_competition.execution.posting import OutputExecutor
 from sansan_competition.execution.renderers import MockGoogleDocsClient
+
+# PDF生成は reportlab に依存する。未導入環境では EXPORT_PDF は error に劣化する。
+_HAS_REPORTLAB = importlib.util.find_spec("reportlab") is not None
 
 
 class IntegrationTests(unittest.TestCase):
@@ -69,7 +73,9 @@ class IntegrationTests(unittest.TestCase):
             results = executor.execute(response, approved)
             statuses = {r.type: r.status for r in results}
             self.assertEqual(statuses["CREATE_CLASSROOM_ANNOUNCEMENT"], "success")
-            self.assertEqual(statuses["EXPORT_PDF"], "success")
+            self.assertEqual(
+                statuses["EXPORT_PDF"], "success" if _HAS_REPORTLAB else "error"
+            )
             self.assertEqual(statuses["EXPORT_MARKDOWN"], "success")
             # 生成物が存在する
             self.assertTrue(any(Path(tmp).iterdir()))
