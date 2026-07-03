@@ -2,6 +2,38 @@
 
 `kimu` 担当の土台として、Google Classroom の提出状況を正規化し、判定し、GUI 班へ返す構造化 JSON を生成する実装を追加しています。
 
+## PR Automation
+
+GitHub Actions based PR automation lives in `.github/workflows/pr-automation.yml`.
+
+- Trigger: `pull_request_target`
+- Loop: auto-fix cache artifacts, rerun validation, post a PR report comment
+- Pass condition: `pytest`, CLI sample generation, and shared JSON contract checks all pass
+- Merge behavior: by default the workflow stops at a review result; add the `automerge` label to allow squash merge after a green run
+- Fork PRs: validation and report comments run, but auto-fix commits are only pushed for same-repository branches
+
+Local dry-run:
+
+```bash
+python3 scripts/pr_automation.py --apply-fixes
+```
+
+## PR Monitoring
+
+Run the repository monitor with a 5x interval:
+
+```bash
+bash scripts/monitor_prs.sh
+```
+
+Optional overrides:
+
+- `PR_MONITOR_INTERVAL_SECONDS=300` sets the poll interval.
+- `PR_MONITOR_LIMIT=50` sets the maximum number of open PRs to fetch.
+- `PR_MONITOR_REPO_DIR=/path/to/repo` sets the repository directory.
+
+## Kimu Scope
+
 ## 含めたもの
 
 - `sansan_competition/normalization.py`

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import argparse
 import json
 from datetime import datetime
 
 from sansan_competition import (
+    AgentTaskType,
     analyze_submissions,
+    build_agent_output,
     build_reminder_generation_response,
     build_submission_analysis_response,
     normalize_course,
@@ -14,7 +17,7 @@ from sansan_competition import (
 from sansan_competition.models import JST
 
 
-def main() -> None:
+def build_sample_analysis():
     course = normalize_course(
         {
             "id": "123456789",
@@ -76,6 +79,48 @@ def main() -> None:
         now=datetime(2026, 7, 3, 13, 0, tzinfo=JST),
         normalization_issues=issues,
     )
+    return course, course_work, analysis
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "command",
+        nargs="?",
+        default="demo",
+        choices=("demo", "sample-reminder", "sample-course-summary"),
+    )
+    args = parser.parse_args(argv)
+
+    course, course_work, analysis = build_sample_analysis()
+
+    if args.command == "sample-reminder":
+        payload = build_reminder_generation_response(
+            "req_20260703_demo_reminder",
+            analysis,
+            reminder_title="課題提出リマインド",
+            reminder_body=(
+                "課題「二次関数プリント」の提出期限が近づいています。"
+                "まだ提出していない人は、7月5日までに提出してください。"
+            ),
+        )
+        print(json.dumps(payload, ensure_ascii=False))
+        return
+
+    if args.command == "sample-course-summary":
+        payload = build_agent_output(
+            AgentTaskType.COURSE_SUMMARY,
+            request_id="req_20260703_demo_course_summary",
+            course=course,
+            coursework=course_work,
+            submissions=[],
+            tone="polite",
+            teacher_instruction="",
+            extra_notes="CLI sample",
+            generated_at=analysis.generated_at,
+        ).to_dict()
+        print(json.dumps(payload, ensure_ascii=False))
+        return
 
     payload = {
         "submissionAnalysis": build_submission_analysis_response(

@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 import json
 from pathlib import Path
 from typing import Any
 
+from .analysis import analyze_submissions
 from .models import (
     AgentTaskType,
     Course,
+    CourseWork,
     JST,
     ResponseStatus,
+    StudentSubmission,
     SubmissionAnalysis,
 )
 from .outputs import build_reminder_outputs, build_submission_report_outputs
@@ -28,6 +32,25 @@ STANDARD_ERROR_CODES = {
     "PARTIAL_CLASSROOM_DATA",
     "NORMALIZATION_FAILED",
 }
+TASK_TITLES = {
+    AgentTaskType.COURSE_SUMMARY: "コース概要",
+    AgentTaskType.COURSEWORK_SUMMARY: "課題概要",
+    AgentTaskType.SUBMISSION_ANALYSIS: "提出状況分析",
+    AgentTaskType.REMINDER_GENERATION: "リマインド案",
+    AgentTaskType.WEEKLY_REPORT: "週次レポート",
+    AgentTaskType.ANNOUNCEMENT_DRAFT: "お知らせ案",
+    AgentTaskType.DOCUMENT_EXPORT: "出力用データ",
+    AgentTaskType.RUBRIC_SUPPORT: "ルーブリック補助",
+    AgentTaskType.ERROR_ANALYSIS: "エラー分析",
+}
+
+
+@dataclass(slots=True)
+class AgentOutputEnvelope:
+    payload: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.payload
 
 
 def schema_file_path() -> Path:
@@ -307,6 +330,269 @@ def validate_agent_output(payload: dict[str, Any]) -> list[str]:
     return errors
 
 
+def validate_agent_output_dict(payload: dict[str, Any]) -> list[str]:
+    return validate_agent_output(payload)
+
+
+def build_agent_output(
+    task_type: AgentTaskType | str,
+    *,
+    request_id: str,
+    course: Course,
+    coursework: CourseWork,
+    submissions: list[StudentSubmission],
+    tone: str = "polite",
+    teacher_instruction: str = "",
+    extra_notes: str = "",
+    generated_at: datetime | None = None,
+) -> AgentOutputEnvelope:
+    resolved_task = AgentTaskType(task_type)
+    now = generated_at or datetime.now(JST)
+    analysis = analyze_submissions(
+        course,
+        _ensure_coursework_due_at(coursework),
+        submissions,
+        now=now,
+    )
+
+    if resolved_task is AgentTaskType.SUBMISSION_ANALYSIS:
+        payload = build_submission_analysis_response(request_id, analysis)
+    elif resolved_task is AgentTaskType.REMINDER_GENERATION:
+        payload = build_reminder_generation_response(
+            request_id,
+            analysis,
+            reminder_title=f"{analysis.course_work.title} 提出リマインド",
+            reminder_body=_build_default_reminder_body(
+                analysis,
+                tone=tone,
+                teacher_instruction=teacher_instruction,
+                extra_notes=extra_notes,
+            ),
+            tone=tone,
+        )
+    else:
+        payload = _build_generic_task_response(
+            resolved_task,
+            request_id=request_id,
+            analysis=analysis,
+            tone=tone,
+            teacher_instruction=teacher_instruction,
+            extra_notes=extra_notes,
+        )
+
+    return AgentOutputEnvelope(payload)
+
+
+def _build_generic_task_response(
+    task_type: AgentTaskType,
+    *,
+    request_id: str,
+    analysis: SubmissionAnalysis,
+    tone: str,
+    teacher_instruction: str,
+    extra_notes: str,
+) -> dict[str, Any]:
+    title = TASK_TITLES[task_type]
+    short_summary = _build_generic_short_summary(task_type, analysis)
+    recommended_action = _build_generic_recommended_action(task_type, analysis)
+    warnings = _build_warnings(
+        analysis,
+        include_privacy_warning=task_type is AgentTaskType.ANNOUNCEMENT_DRAFT,
+    )
+    if teacher_instruction.strip():
+        warnings.append(
+            {
+                "level": "low",
+                "message": f"教師追加指示: {teacher_instruction.strip()}",
+            }
+        )
+    if extra_notes.strip():
+        warnings.append(
+            {
+                "level": "low",
+                "message": f"補足: {extra_notes.strip()}",
+            }
+        )
+
+    editable_fields: list[dict[str, Any]] = []
+    outputs = build_submission_report_outputs(analysis)
+    approval = {
+        "required": False,
+        "reason": "確認用の構造化データ生成のみで、投稿操作は含みません。",
+        "actions": [
+            _approval_action(
+                action_id="action_export_markdown",
+                action_type="EXPORT_MARKDOWN",
+                label="Markdownとして出力",
+                payload_ref="outputs.markdown",
+            ),
+            _approval_action(
+                action_id="action_export_pdf",
+                action_type="EXPORT_PDF",
+                label="PDFとして出力",
+                payload_ref="outputs.pdf",
+            ),
+            _approval_action(
+                action_id="action_export_google_doc",
+                action_type="EXPORT_GOOGLE_DOCUMENT",
+                label="Google Documentとして出力",
+                payload_ref="outputs.googleDocument",
+            ),
+        ],
+    }
+
+    if task_type is AgentTaskType.ANNOUNCEMENT_DRAFT:
+        announcement_title = f"{analysis.course_work.title} に関するお知らせ案"
+        announcement_body = _build_default_reminder_body(
+            analysis,
+            tone=tone,
+            teacher_instruction=teacher_instruction,
+            extra_notes=extra_notes,
+        )
+        outputs = build_reminder_outputs(
+            analysis,
+            reminder_title=announcement_title,
+            reminder_body=announcement_body,
+            tone=tone,
+        )
+        approval = {
+            "required": True,
+            "reason": "Classroomへの投稿候補を含むため、教師の承認が必要です。",
+            "actions": [
+                _approval_action(
+                    action_id="action_create_classroom_announcement",
+                    action_type="CREATE_CLASSROOM_ANNOUNCEMENT",
+                    label="Classroomにお知らせを投稿",
+                    payload_ref="outputs.classroomReminder",
+                    requires_confirmation=True,
+                ),
+                _approval_action(
+                    action_id="action_export_markdown",
+                    action_type="EXPORT_MARKDOWN",
+                    label="Markdownとして出力",
+                    payload_ref="outputs.markdown",
+                ),
+            ],
+        }
+        editable_fields = [
+            {
+                "fieldId": "announcement_body",
+                "label": "お知らせ本文",
+                "type": "textarea",
+                "value": announcement_body,
+                "required": True,
+            }
+        ]
+
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "requestId": request_id,
+        "generatedAt": analysis.generated_at.isoformat(timespec="seconds"),
+        "agentTaskType": task_type.value,
+        "status": ResponseStatus.SUCCESS.value,
+        "course": analysis.course.to_contract(),
+        "summary": {
+            "title": f"{analysis.course.name} {title}",
+            "shortSummary": short_summary,
+            "teacherActionRequired": analysis.teacher_action_required(),
+            "recommendedAction": recommended_action,
+        },
+        "gui": {
+            "cards": _build_metric_cards(analysis),
+            "tables": [_build_submission_table(analysis)],
+            "warnings": warnings,
+            "editableFields": editable_fields,
+        },
+        "outputs": outputs,
+        "approval": approval,
+        "errors": [],
+    }
+
+
+def _build_default_reminder_body(
+    analysis: SubmissionAnalysis,
+    *,
+    tone: str,
+    teacher_instruction: str,
+    extra_notes: str,
+) -> str:
+    sentences = [
+        (
+            f"課題「{analysis.course_work.title}」の提出状況を確認しました。"
+            "まだ提出していない人は、締切までに提出してください。"
+        )
+    ]
+    if tone != "polite":
+        sentences.append(f"口調指定: {tone}")
+    if teacher_instruction.strip():
+        sentences.append(f"教師追加指示: {teacher_instruction.strip()}")
+    if extra_notes.strip():
+        sentences.append(f"補足: {extra_notes.strip()}")
+    return " ".join(sentences)
+
+
+def _build_generic_short_summary(
+    task_type: AgentTaskType,
+    analysis: SubmissionAnalysis,
+) -> str:
+    counts = analysis.counts()
+    if task_type is AgentTaskType.COURSE_SUMMARY:
+        return (
+            f"{analysis.course.name} には対象課題が1件あり、"
+            f"未提出者は {counts['unsubmittedCount']}名です。"
+        )
+    if task_type is AgentTaskType.COURSEWORK_SUMMARY:
+        return f"{analysis.course_work.title} の構造化サマリーです。"
+    if task_type is AgentTaskType.WEEKLY_REPORT:
+        return (
+            f"今週の確認対象として、未提出 {counts['unsubmittedCount']}名、"
+            f"遅延提出 {counts['lateCount']}名を検出しました。"
+        )
+    if task_type is AgentTaskType.ANNOUNCEMENT_DRAFT:
+        return f"{analysis.course_work.title} に関する全体向けお知らせ案です。"
+    if task_type is AgentTaskType.DOCUMENT_EXPORT:
+        return "Markdown、PDF、Google Document 用の構造化データです。"
+    if task_type is AgentTaskType.RUBRIC_SUPPORT:
+        return "提出状況を踏まえたルーブリック補助用の共通データです。"
+    if task_type is AgentTaskType.ERROR_ANALYSIS:
+        return "取得済みデータをもとにしたエラー説明用の共通データです。"
+    return f"{analysis.course_work.title} に関する共通データです。"
+
+
+def _build_generic_recommended_action(
+    task_type: AgentTaskType,
+    analysis: SubmissionAnalysis,
+) -> str:
+    if task_type is AgentTaskType.ANNOUNCEMENT_DRAFT:
+        return "本文を確認し、必要であれば教師承認後に投稿してください。"
+    if task_type is AgentTaskType.DOCUMENT_EXPORT:
+        return "必要な形式を選んで出力してください。"
+    return analysis.recommended_action()
+
+
+def _ensure_coursework_due_at(coursework: CourseWork) -> CourseWork:
+    if coursework.due_at is not None or coursework.due_date is None:
+        return coursework
+
+    due_time = coursework.due_time or "23:59"
+    due_at = datetime.fromisoformat(f"{coursework.due_date}T{due_time}:00+09:00")
+    return CourseWork(
+        course_work_id=coursework.course_work_id,
+        course_id=coursework.course_id,
+        title=coursework.title,
+        description=coursework.description,
+        work_type=coursework.work_type,
+        max_points=coursework.max_points,
+        due_at=due_at,
+        due_date=coursework.due_date,
+        due_time=coursework.due_time,
+        state=coursework.state,
+        materials=list(coursework.materials),
+        topic_id=coursework.topic_id,
+        has_rubric=coursework.has_rubric,
+    )
+
+
 def _build_metric_cards(analysis: SubmissionAnalysis) -> list[dict[str, Any]]:
     counts = analysis.counts()
     return [
@@ -415,8 +701,10 @@ def _validate_course(course: Any, errors: list[str]) -> None:
     if not isinstance(course, dict):
         errors.append("course must be an object or null.")
         return
-    for key in ("courseId", "name", "section", "description", "state"):
+    for key in ("courseId", "name", "state"):
         _require_string(course, key, errors, prefix="course")
+    for key in ("section", "description"):
+        _require_string_type(course, key, errors, prefix="course")
     _require_list(course, "teacherIds", errors, prefix="course")
     if not isinstance(course.get("studentCount"), int):
         errors.append("course.studentCount must be an integer.")
@@ -577,6 +865,19 @@ def _require_list(
     label = f"{prefix}.{key}" if prefix else key
     if not isinstance(value, list):
         errors.append(f"{label} must be a list.")
+
+
+def _require_string_type(
+    obj: dict[str, Any],
+    key: str,
+    errors: list[str],
+    *,
+    prefix: str | None = None,
+) -> None:
+    value = obj.get(key)
+    label = f"{prefix}.{key}" if prefix else key
+    if not isinstance(value, str):
+        errors.append(f"{label} must be a string.")
 
 
 def _require_iso_datetime(value: Any, label: str, errors: list[str]) -> None:

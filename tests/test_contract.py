@@ -6,12 +6,14 @@ from pathlib import Path
 import unittest
 
 from sansan_competition.contract import (
+    build_agent_output,
     build_error_response,
     build_reminder_generation_response,
     build_submission_analysis_response,
     load_contract_schema,
     validate_agent_output,
 )
+from sansan_competition.contracts import ALLOWED_AGENT_TASK_TYPES
 from sansan_competition.models import AgentTaskType, JST
 from sansan_competition.normalization import (
     normalize_course,
@@ -125,6 +127,38 @@ class ContractTests(unittest.TestCase):
         for sample_file in samples_dir.glob("*.json"):
             payload = json.loads(sample_file.read_text())
             with self.subTest(sample=sample_file.name):
+                self.assertEqual(validate_agent_output(payload), [])
+
+    def test_build_agent_output_supports_all_allowed_task_types(self) -> None:
+        course_work = self.analysis.course_work
+        submissions = [
+            normalize_submission_batch(
+                [
+                    {
+                        "id": "sub_001",
+                        "courseId": "123456789",
+                        "courseWorkId": course_work.course_work_id,
+                        "studentId": "student_001",
+                        "studentName": "山田太郎",
+                        "state": "NEW",
+                    }
+                ]
+            )[0][0]
+        ]
+
+        for task_type in sorted(ALLOWED_AGENT_TASK_TYPES):
+            payload = build_agent_output(
+                task_type,
+                request_id=f"req_{task_type.lower()}",
+                course=self.course,
+                coursework=course_work,
+                submissions=submissions,
+                tone="polite",
+                teacher_instruction="必要なら補足してください。",
+                extra_notes="test",
+                generated_at=datetime(2026, 7, 3, 13, 0, tzinfo=JST),
+            ).to_dict()
+            with self.subTest(task_type=task_type):
                 self.assertEqual(validate_agent_output(payload), [])
 
 
