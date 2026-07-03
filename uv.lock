@@ -417,6 +417,7 @@ dependencies = [
 google = [
     { name = "google-api-python-client" },
     { name = "google-auth" },
+    { name = "google-auth-httplib2" },
     { name = "google-auth-oauthlib" },
 ]
 
@@ -424,6 +425,7 @@ google = [
 requires-dist = [
     { name = "google-api-python-client", marker = "extra == 'google'", specifier = ">=2.100" },
     { name = "google-auth", marker = "extra == 'google'", specifier = ">=2.30" },
+    { name = "google-auth-httplib2", marker = "extra == 'google'" },
     { name = "google-auth-oauthlib", marker = "extra == 'google'", specifier = ">=1.2" },
     { name = "reportlab", specifier = ">=4.0" },
 ]
