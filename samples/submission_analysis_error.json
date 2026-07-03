@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "1.0.0",
+  "requestId": "req_20260703_sample_error",
+  "generatedAt": "2026-07-03T13:10:00+09:00",
+  "agentTaskType": "SUBMISSION_ANALYSIS",
+  "status": "error",
+  "course": {
+    "courseId": "123456789",
+    "name": "数学I",
+    "section": "1年A組",
+    "description": "二次関数の基礎",
+    "state": "ACTIVE",
+    "teacherIds": [
+      "teacher_001"
+    ],
+    "studentCount": 3
+  },
+  "summary": {
+    "title": "提出状況の取得に失敗しました",
+    "shortSummary": "Google Classroom APIから提出状況を取得できませんでした。",
+    "teacherActionRequired": true,
+    "recommendedAction": "Googleアカウントの権限を確認し、再度実行してください。"
+  },
+  "gui": {
+    "cards": [],
+    "tables": [],
+    "warnings": [],
+    "editableFields": []
+  },
+  "outputs": {
+    "markdown": null,
+    "pdf": null,
+    "googleDocument": null,
+    "classroomReminder": null
+  },
+  "approval": {
+    "required": false,
+    "reason": "失敗レスポンスのため承認操作はありません。",
+    "actions": []
+  },
+  "errors": [
+    {
+      "code": "CLASSROOM_API_PERMISSION_DENIED",
+      "message": "提出状況を取得する権限がありません。",
+      "recoverable": true
+    }
+  ]
+}

@@ -1,0 +1,341 @@
+{
+  "schemaVersion": "1.0.0",
+  "requestId": "req_20260703_sample_analysis",
+  "generatedAt": "2026-07-03T13:00:00+09:00",
+  "agentTaskType": "SUBMISSION_ANALYSIS",
+  "status": "success",
+  "course": {
+    "courseId": "123456789",
+    "name": "数学I",
+    "section": "1年A組",
+    "description": "二次関数の基礎",
+    "state": "ACTIVE",
+    "teacherIds": [
+      "teacher_001"
+    ],
+    "studentCount": 3
+  },
+  "summary": {
+    "title": "二次関数プリント の提出状況分析",
+    "shortSummary": "二次関数プリント の未提出者は 1名、遅延提出者は 1名です。",
+    "teacherActionRequired": true,
+    "recommendedAction": "未提出者を確認し、必要に応じてClassroomでリマインドを送信してください。"
+  },
+  "gui": {
+    "cards": [
+      {
+        "cardId": "card_unsubmitted_count",
+        "type": "metric",
+        "title": "未提出者数",
+        "value": "1",
+        "description": "二次関数プリント の未提出者数です。"
+      },
+      {
+        "cardId": "card_due_soon_count",
+        "type": "metric",
+        "title": "期限接近者数",
+        "value": "0",
+        "description": "締切が近い未提出者数です。"
+      },
+      {
+        "cardId": "card_late_count",
+        "type": "metric",
+        "title": "遅延提出者数",
+        "value": "1",
+        "description": "締切後に提出された件数です。"
+      }
+    ],
+    "tables": [
+      {
+        "tableId": "table_submission_status",
+        "title": "提出状況一覧",
+        "columns": [
+          {
+            "key": "studentName",
+            "label": "生徒名"
+          },
+          {
+            "key": "status",
+            "label": "状態"
+          },
+          {
+            "key": "dueDate",
+            "label": "締切"
+          },
+          {
+            "key": "submittedAt",
+            "label": "提出日時"
+          },
+          {
+            "key": "notes",
+            "label": "備考"
+          }
+        ],
+        "rows": [
+          {
+            "studentId": "student_001",
+            "studentName": "山田太郎",
+            "status": "未提出",
+            "rawState": "NEW",
+            "dueDate": "2026-07-05",
+            "submittedAt": null,
+            "attachmentCount": 0,
+            "notes": ""
+          },
+          {
+            "studentId": "student_003",
+            "studentName": "鈴木一郎",
+            "status": "遅延提出",
+            "rawState": "TURNED_IN",
+            "dueDate": "2026-07-05",
+            "submittedAt": "2026-07-06T00:30:00+09:00",
+            "attachmentCount": 0,
+            "notes": "締切後に提出されています。 / 提出済みですが添付不足の可能性があります。"
+          },
+          {
+            "studentId": "student_002",
+            "studentName": "佐藤花子",
+            "status": "提出済み",
+            "rawState": "TURNED_IN",
+            "dueDate": "2026-07-05",
+            "submittedAt": "2026-07-05T20:15:00+09:00",
+            "attachmentCount": 1,
+            "notes": ""
+          }
+        ]
+      }
+    ],
+    "warnings": [
+      {
+        "level": "medium",
+        "message": "添付不足の可能性がある提出物があります。必ず実際の提出内容を確認してください。"
+      }
+    ],
+    "editableFields": []
+  },
+  "outputs": {
+    "markdown": {
+      "fileName": "数学I_submission_report.md",
+      "title": "数学I 提出状況レポート",
+      "content": "# 数学I 提出状況レポート\n\n## 概要\n- 対象コース: 数学I / 1年A組\n- 対象課題: 二次関数プリント\n- 作成日時: 2026-07-03T13:00+09:00\n- 総対象者数: 3名\n- 未提出者数: 1名\n- 期限接近者数: 0名\n- 遅延提出者数: 1名\n\n## 未提出者一覧\n| 生徒名 | 状態 | 締切 | 提出日時 | 備考 |\n| --- | --- | --- | --- | --- |\n| 山田太郎 | 未提出 | 2026-07-05 | - |  |\n\n## 遅延提出者一覧\n| 生徒名 | 状態 | 締切 | 提出日時 | 備考 |\n| --- | --- | --- | --- | --- |\n| 鈴木一郎 | 遅延提出 | 2026-07-05 | 2026-07-06T00:30+09:00 | 締切後に提出されています。 / 提出済みですが添付不足の可能性があります。 |\n\n## 添付確認が必要な提出物\n| 生徒名 | 状態 | 締切 | 提出日時 | 備考 |\n| --- | --- | --- | --- | --- |\n| 鈴木一郎 | 遅延提出 | 2026-07-05 | 2026-07-06T00:30+09:00 | 締切後に提出されています。 / 提出済みですが添付不足の可能性があります。 |\n\n## AIによる提案\n未提出者を確認し、必要に応じてClassroomでリマインドを送信してください。"
+    },
+    "pdf": {
+      "fileName": "数学I_submission_report.pdf",
+      "title": "数学I 提出状況レポート",
+      "layout": "report",
+      "sections": [
+        {
+          "heading": "概要",
+          "body": "数学I / 1年A組 の課題 「二次関数プリント」に関する提出状況レポートです。"
+        },
+        {
+          "heading": "集計",
+          "table": {
+            "columns": [
+              "指標",
+              "値"
+            ],
+            "rows": [
+              [
+                "総対象者数",
+                "3"
+              ],
+              [
+                "未提出者数",
+                "1"
+              ],
+              [
+                "期限接近者数",
+                "0"
+              ],
+              [
+                "遅延提出者数",
+                "1"
+              ],
+              [
+                "添付確認必要数",
+                "1"
+              ]
+            ]
+          }
+        },
+        {
+          "heading": "未提出者一覧",
+          "table": {
+            "columns": [
+              "生徒名",
+              "状態",
+              "締切",
+              "提出日時",
+              "備考"
+            ],
+            "rows": [
+              [
+                "山田太郎",
+                "未提出",
+                "2026-07-05",
+                "-",
+                ""
+              ]
+            ]
+          }
+        },
+        {
+          "heading": "遅延提出者一覧",
+          "table": {
+            "columns": [
+              "生徒名",
+              "状態",
+              "締切",
+              "提出日時",
+              "備考"
+            ],
+            "rows": [
+              [
+                "鈴木一郎",
+                "遅延提出",
+                "2026-07-05",
+                "2026-07-06T00:30+09:00",
+                "締切後に提出されています。 / 提出済みですが添付不足の可能性があります。"
+              ]
+            ]
+          }
+        },
+        {
+          "heading": "AIによる提案",
+          "body": "未提出者を確認し、必要に応じてClassroomでリマインドを送信してください。"
+        }
+      ]
+    },
+    "googleDocument": {
+      "title": "数学I 提出状況レポート 2026-07-03",
+      "documentType": "report",
+      "blocks": [
+        {
+          "type": "heading1",
+          "text": "数学I 提出状況レポート"
+        },
+        {
+          "type": "paragraph",
+          "text": "数学I / 1年A組 の課題 「二次関数プリント」に関する提出状況レポートです。"
+        },
+        {
+          "type": "heading2",
+          "text": "集計"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "指標",
+            "値"
+          ],
+          "rows": [
+            [
+              "総対象者数",
+              "3"
+            ],
+            [
+              "未提出者数",
+              "1"
+            ],
+            [
+              "期限接近者数",
+              "0"
+            ],
+            [
+              "遅延提出者数",
+              "1"
+            ],
+            [
+              "添付確認必要数",
+              "1"
+            ]
+          ]
+        },
+        {
+          "type": "heading2",
+          "text": "未提出者一覧"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "生徒名",
+            "状態",
+            "締切",
+            "提出日時",
+            "備考"
+          ],
+          "rows": [
+            [
+              "山田太郎",
+              "未提出",
+              "2026-07-05",
+              "-",
+              ""
+            ]
+          ]
+        },
+        {
+          "type": "heading2",
+          "text": "遅延提出者一覧"
+        },
+        {
+          "type": "table",
+          "columns": [
+            "生徒名",
+            "状態",
+            "締切",
+            "提出日時",
+            "備考"
+          ],
+          "rows": [
+            [
+              "鈴木一郎",
+              "遅延提出",
+              "2026-07-05",
+              "2026-07-06T00:30+09:00",
+              "締切後に提出されています。 / 提出済みですが添付不足の可能性があります。"
+            ]
+          ]
+        },
+        {
+          "type": "heading2",
+          "text": "AIによる提案"
+        },
+        {
+          "type": "paragraph",
+          "text": "未提出者を確認し、必要に応じてClassroomでリマインドを送信してください。"
+        }
+      ]
+    },
+    "classroomReminder": null
+  },
+  "approval": {
+    "required": false,
+    "reason": "Classroom投稿を含まないため、教師承認は不要です。",
+    "actions": [
+      {
+        "actionId": "action_export_markdown",
+        "type": "EXPORT_MARKDOWN",
+        "label": "Markdownとして出力",
+        "requiresConfirmation": false,
+        "payloadRef": "outputs.markdown"
+      },
+      {
+        "actionId": "action_export_pdf",
+        "type": "EXPORT_PDF",
+        "label": "PDFとして出力",
+        "requiresConfirmation": false,
+        "payloadRef": "outputs.pdf"
+      },
+      {
+        "actionId": "action_export_google_doc",
+        "type": "EXPORT_GOOGLE_DOCUMENT",
+        "label": "Google Documentとして出力",
+        "requiresConfirmation": false,
+        "payloadRef": "outputs.googleDocument"
+      }
+    ]
+  },
+  "errors": []
+}

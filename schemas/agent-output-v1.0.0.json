@@ -1,0 +1,563 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sansan-competition.local/schemas/agent-output-v1.0.0.json",
+  "title": "Google Classroom AI Agent Output",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "requestId",
+    "generatedAt",
+    "agentTaskType",
+    "status",
+    "course",
+    "summary",
+    "gui",
+    "outputs",
+    "approval",
+    "errors"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "agentTaskType": {
+      "type": "string",
+      "enum": [
+        "COURSE_SUMMARY",
+        "COURSEWORK_SUMMARY",
+        "SUBMISSION_ANALYSIS",
+        "REMINDER_GENERATION",
+        "WEEKLY_REPORT",
+        "ANNOUNCEMENT_DRAFT",
+        "DOCUMENT_EXPORT",
+        "RUBRIC_SUPPORT",
+        "ERROR_ANALYSIS"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "partial_success",
+        "error"
+      ]
+    },
+    "course": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/course"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "gui": {
+      "$ref": "#/$defs/gui"
+    },
+    "outputs": {
+      "$ref": "#/$defs/outputs"
+    },
+    "approval": {
+      "$ref": "#/$defs/approval"
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/errorItem"
+      }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "course": {
+      "type": "object",
+      "required": [
+        "courseId",
+        "name",
+        "section",
+        "description",
+        "state",
+        "teacherIds",
+        "studentCount"
+      ],
+      "properties": {
+        "courseId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "section": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "teacherIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "studentCount": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": true
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "title",
+        "shortSummary",
+        "teacherActionRequired",
+        "recommendedAction"
+      ],
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "shortSummary": {
+          "type": "string"
+        },
+        "teacherActionRequired": {
+          "type": "boolean"
+        },
+        "recommendedAction": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "gui": {
+      "type": "object",
+      "required": [
+        "cards",
+        "tables",
+        "warnings",
+        "editableFields"
+      ],
+      "properties": {
+        "cards": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/card"
+          }
+        },
+        "tables": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/table"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/warning"
+          }
+        },
+        "editableFields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/editableField"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "card": {
+      "type": "object",
+      "required": [
+        "cardId",
+        "type",
+        "title",
+        "value",
+        "description"
+      ],
+      "properties": {
+        "cardId": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "table": {
+      "type": "object",
+      "required": [
+        "tableId",
+        "title",
+        "columns",
+        "rows"
+      ],
+      "properties": {
+        "tableId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "key",
+              "label"
+            ],
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "warning": {
+      "type": "object",
+      "required": [
+        "level",
+        "message"
+      ],
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "editableField": {
+      "type": "object",
+      "required": [
+        "fieldId",
+        "label",
+        "type",
+        "value",
+        "required"
+      ],
+      "properties": {
+        "fieldId": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "value": {},
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "outputs": {
+      "type": "object",
+      "required": [
+        "markdown",
+        "pdf",
+        "googleDocument",
+        "classroomReminder"
+      ],
+      "properties": {
+        "markdown": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/markdownOutput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pdf": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/pdfOutput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "googleDocument": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/googleDocumentOutput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "classroomReminder": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/classroomReminderOutput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "markdownOutput": {
+      "type": "object",
+      "required": [
+        "fileName",
+        "title",
+        "content"
+      ],
+      "properties": {
+        "fileName": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "pdfOutput": {
+      "type": "object",
+      "required": [
+        "fileName",
+        "title",
+        "layout",
+        "sections"
+      ],
+      "properties": {
+        "fileName": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "layout": {
+          "type": "string"
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "googleDocumentOutput": {
+      "type": "object",
+      "required": [
+        "title",
+        "documentType",
+        "blocks"
+      ],
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "documentType": {
+          "type": "string"
+        },
+        "blocks": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "classroomReminderOutput": {
+      "type": "object",
+      "required": [
+        "target",
+        "postType",
+        "title",
+        "text",
+        "materials",
+        "scheduledTime",
+        "assigneeMode",
+        "targetStudentIds",
+        "requiresTeacherApproval"
+      ],
+      "properties": {
+        "target": {
+          "type": "object",
+          "required": [
+            "courseId",
+            "courseWorkId"
+          ],
+          "properties": {
+            "courseId": {
+              "type": "string"
+            },
+            "courseWorkId": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        },
+        "postType": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "materials": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "scheduledTime": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "assigneeMode": {
+          "type": "string"
+        },
+        "targetStudentIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requiresTeacherApproval": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    },
+    "approval": {
+      "type": "object",
+      "required": [
+        "required",
+        "reason",
+        "actions"
+      ],
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/approvalAction"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "approvalAction": {
+      "type": "object",
+      "required": [
+        "actionId",
+        "type",
+        "label",
+        "requiresConfirmation",
+        "payloadRef"
+      ],
+      "properties": {
+        "actionId": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "requiresConfirmation": {
+          "type": "boolean"
+        },
+        "payloadRef": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "errorItem": {
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "recoverable"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "recoverable": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

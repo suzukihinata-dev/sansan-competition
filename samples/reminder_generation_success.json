@@ -1,0 +1,220 @@
+{
+  "schemaVersion": "1.0.0",
+  "requestId": "req_20260703_sample_reminder",
+  "generatedAt": "2026-07-03T13:00:00+09:00",
+  "agentTaskType": "REMINDER_GENERATION",
+  "status": "success",
+  "course": {
+    "courseId": "123456789",
+    "name": "数学I",
+    "section": "1年A組",
+    "description": "二次関数の基礎",
+    "state": "ACTIVE",
+    "teacherIds": [
+      "teacher_001"
+    ],
+    "studentCount": 3
+  },
+  "summary": {
+    "title": "課題提出リマインド",
+    "shortSummary": "二次関数プリント の未提出者 1名に向けたリマインド案です。",
+    "teacherActionRequired": true,
+    "recommendedAction": "内容を確認し、必要に応じて教師承認後に投稿してください。"
+  },
+  "gui": {
+    "cards": [
+      {
+        "cardId": "card_unsubmitted_count",
+        "type": "metric",
+        "title": "未提出者数",
+        "value": "1",
+        "description": "二次関数プリント の未提出者数です。"
+      },
+      {
+        "cardId": "card_due_soon_count",
+        "type": "metric",
+        "title": "期限接近者数",
+        "value": "0",
+        "description": "締切が近い未提出者数です。"
+      },
+      {
+        "cardId": "card_late_count",
+        "type": "metric",
+        "title": "遅延提出者数",
+        "value": "1",
+        "description": "締切後に提出された件数です。"
+      }
+    ],
+    "tables": [
+      {
+        "tableId": "table_submission_status",
+        "title": "リマインド対象一覧",
+        "columns": [
+          {
+            "key": "studentName",
+            "label": "生徒名"
+          },
+          {
+            "key": "status",
+            "label": "状態"
+          },
+          {
+            "key": "dueDate",
+            "label": "締切"
+          },
+          {
+            "key": "submittedAt",
+            "label": "提出日時"
+          },
+          {
+            "key": "notes",
+            "label": "備考"
+          }
+        ],
+        "rows": [
+          {
+            "studentId": "student_001",
+            "studentName": "山田太郎",
+            "status": "未提出",
+            "rawState": "NEW",
+            "dueDate": "2026-07-05",
+            "submittedAt": null,
+            "attachmentCount": 0,
+            "notes": ""
+          }
+        ]
+      }
+    ],
+    "warnings": [
+      {
+        "level": "medium",
+        "message": "添付不足の可能性がある提出物があります。必ず実際の提出内容を確認してください。"
+      },
+      {
+        "level": "medium",
+        "message": "生徒個人名を含むため、共有範囲と投稿本文の内容に注意してください。"
+      }
+    ],
+    "editableFields": [
+      {
+        "fieldId": "reminder_title",
+        "label": "リマインドタイトル",
+        "type": "text",
+        "value": "課題提出リマインド",
+        "required": true
+      },
+      {
+        "fieldId": "reminder_body",
+        "label": "リマインド本文",
+        "type": "textarea",
+        "value": "課題「二次関数プリント」の提出期限が近づいています。まだ提出していない人は、7月5日までに提出してください。",
+        "required": true
+      }
+    ]
+  },
+  "outputs": {
+    "markdown": {
+      "fileName": "数学I_reminder_draft.md",
+      "title": "課題提出リマインド",
+      "content": "# 課題提出リマインド\n\n## 対象\n- コース: 数学I / 1年A組\n- 課題: 二次関数プリント\n- 未提出者数: 1名\n- 口調: polite\n\n## 投稿案\n課題「二次関数プリント」の提出期限が近づいています。まだ提出していない人は、7月5日までに提出してください。\n\n## 教師向け注意\n- Classroom投稿前に内容と対象コースを確認してください。\n- 生徒個人名は本文に含めない想定です。"
+    },
+    "pdf": {
+      "fileName": "数学I_reminder_draft.pdf",
+      "title": "課題提出リマインド",
+      "layout": "notice",
+      "sections": [
+        {
+          "heading": "対象",
+          "body": "数学I / 1年A組 / 課題「二次関数プリント」 / 未提出者 1名 / 口調 polite"
+        },
+        {
+          "heading": "投稿案",
+          "body": "課題「二次関数プリント」の提出期限が近づいています。まだ提出していない人は、7月5日までに提出してください。"
+        },
+        {
+          "heading": "注意事項",
+          "body": "Classroomへ投稿する前に、教師による承認が必要です。"
+        }
+      ]
+    },
+    "googleDocument": {
+      "title": "課題提出リマインド 2026-07-03",
+      "documentType": "announcement_draft",
+      "blocks": [
+        {
+          "type": "heading1",
+          "text": "課題提出リマインド"
+        },
+        {
+          "type": "paragraph",
+          "text": "対象: 数学I / 1年A組 / 課題「二次関数プリント」"
+        },
+        {
+          "type": "paragraph",
+          "text": "未提出者数: 1名 / 口調: polite"
+        },
+        {
+          "type": "heading2",
+          "text": "投稿案"
+        },
+        {
+          "type": "paragraph",
+          "text": "課題「二次関数プリント」の提出期限が近づいています。まだ提出していない人は、7月5日までに提出してください。"
+        },
+        {
+          "type": "heading2",
+          "text": "注意事項"
+        },
+        {
+          "type": "bulletList",
+          "items": [
+            "Classroomへ投稿する前に教師が承認すること。",
+            "他の生徒の提出状況が分かる表現を避けること。"
+          ]
+        }
+      ]
+    },
+    "classroomReminder": {
+      "target": {
+        "courseId": "123456789",
+        "courseWorkId": "987654321"
+      },
+      "postType": "announcement",
+      "title": "課題提出リマインド",
+      "text": "課題「二次関数プリント」の提出期限が近づいています。まだ提出していない人は、7月5日までに提出してください。",
+      "materials": [],
+      "scheduledTime": null,
+      "assigneeMode": "ALL_STUDENTS",
+      "targetStudentIds": [],
+      "requiresTeacherApproval": true
+    }
+  },
+  "approval": {
+    "required": true,
+    "reason": "Classroomへの投稿を行うため、教師の承認が必要です。",
+    "actions": [
+      {
+        "actionId": "action_create_classroom_announcement",
+        "type": "CREATE_CLASSROOM_ANNOUNCEMENT",
+        "label": "Classroomにリマインドを投稿",
+        "requiresConfirmation": true,
+        "payloadRef": "outputs.classroomReminder"
+      },
+      {
+        "actionId": "action_export_markdown",
+        "type": "EXPORT_MARKDOWN",
+        "label": "Markdownとして出力",
+        "requiresConfirmation": false,
+        "payloadRef": "outputs.markdown"
+      },
+      {
+        "actionId": "action_export_pdf",
+        "type": "EXPORT_PDF",
+        "label": "PDFとして出力",
+        "requiresConfirmation": false,
+        "payloadRef": "outputs.pdf"
+      }
+    ]
+  },
+  "errors": []
+}
