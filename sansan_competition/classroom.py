@@ -35,12 +35,14 @@ class GoogleClassroomClient:
         *,
         scopes: tuple[str, ...] | None = None,
         oauth_config: GoogleOAuthConfig | None = None,
+        allow_interactive: bool = True,
     ) -> GoogleClassroomClient:
         service = build_google_service(
             "classroom",
             "v1",
             scopes=scopes or default_classroom_read_scopes(),
             config=oauth_config,
+            allow_interactive=allow_interactive,
         )
         return cls(service)
 
@@ -268,11 +270,13 @@ def fetch_submission_analysis(
 def build_post_only_client(
     *,
     oauth_config: GoogleOAuthConfig | None = None,
+    allow_interactive: bool = True,
 ) -> GoogleClassroomClient:
     service = build_google_service(
         "classroom",
         "v1",
         scopes=default_classroom_post_scopes(),
         config=oauth_config,
+        allow_interactive=allow_interactive,
     )
     return GoogleClassroomClient(service)

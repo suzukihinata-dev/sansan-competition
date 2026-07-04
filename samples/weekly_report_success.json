@@ -1,8 +1,8 @@
 {
   "schemaVersion": "1.0.0",
-  "requestId": "req_20260703_sample_analysis",
+  "requestId": "req_20260703_sample_weekly_report",
   "generatedAt": "2026-07-03T13:00:00+09:00",
-  "agentTaskType": "SUBMISSION_ANALYSIS",
+  "agentTaskType": "WEEKLY_REPORT",
   "status": "success",
   "course": {
     "courseId": "123456789",
@@ -16,8 +16,8 @@
     "studentCount": 3
   },
   "summary": {
-    "title": "二次関数プリント の提出状況分析",
-    "shortSummary": "二次関数プリント の未提出者は 1名、遅延提出者は 1名です。",
+    "title": "数学I 週次レポート",
+    "shortSummary": "今週の確認対象として、未提出 1名、遅延提出 1名を検出しました。",
     "teacherActionRequired": true,
     "recommendedAction": "未提出者を確認し、必要に応じてClassroomでリマインドを送信してください。"
   },
@@ -312,7 +312,7 @@
   },
   "approval": {
     "required": false,
-    "reason": "Classroom投稿を含まないため、教師承認は不要です。",
+    "reason": "確認用の構造化データ生成のみで、投稿操作は含みません。",
     "actions": [
       {
         "actionId": "action_export_markdown",

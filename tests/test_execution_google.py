@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime
 
+from sansan_competition.analysis import analyze_submissions
+from sansan_competition.classroom import build_classroom_announcement_request
+from sansan_competition.contract import build_reminder_generation_response
 from sansan_competition.execution.errors import AgentError, ErrorCode
 from sansan_competition.execution.google_auth import (
     MockAuthProvider,
@@ -10,13 +14,81 @@ from sansan_competition.execution.google_auth import (
     Scopes,
 )
 from sansan_competition.execution.classroom_client import MockClassroomClient
-from sansan_competition.normalization import normalize_submission_batch
+from sansan_competition.models import JST
+from sansan_competition.normalization import (
+    normalize_course,
+    normalize_coursework,
+    normalize_submission_batch,
+)
 
 
 def _logged_in() -> MockAuthProvider:
     auth = MockAuthProvider()
     auth.login(READ_SCOPES + WRITE_SCOPES)
     return auth
+
+
+def _sample_analysis():
+    course = normalize_course(
+        {
+            "id": "123456789",
+            "name": "数学I",
+            "section": "1年A組",
+            "description": "二次関数の基礎",
+            "teacherIds": ["teacher_001"],
+            "studentCount": 3,
+        }
+    )
+    course_work = normalize_coursework(
+        {
+            "id": "987654321",
+            "courseId": "123456789",
+            "title": "二次関数プリント",
+            "description": "配布プリントを解いて提出",
+            "workType": "ASSIGNMENT",
+            "dueDate": "2026-07-05",
+            "dueTime": "23:59",
+        }
+    )
+    submissions, issues = normalize_submission_batch(
+        [
+            {
+                "id": "sub_001",
+                "courseId": "123456789",
+                "courseWorkId": "987654321",
+                "studentId": "student_001",
+                "studentName": "山田太郎",
+                "state": "NEW",
+            },
+            {
+                "id": "sub_002",
+                "courseId": "123456789",
+                "courseWorkId": "987654321",
+                "studentId": "student_002",
+                "studentName": "佐藤花子",
+                "state": "TURNED_IN",
+                "submissionTime": "2026-07-05T20:15:00+09:00",
+                "attachments": [{"driveFile": {"id": "file_001"}}],
+            },
+            {
+                "id": "sub_003",
+                "courseId": "123456789",
+                "courseWorkId": "987654321",
+                "studentId": "student_003",
+                "studentName": "鈴木一郎",
+                "state": "TURNED_IN",
+                "submissionTime": "2026-07-06T00:30:00+09:00",
+                "late": True,
+            },
+        ]
+    )
+    return analyze_submissions(
+        course,
+        course_work,
+        submissions,
+        now=datetime(2026, 7, 3, 13, 0, tzinfo=JST),
+        normalization_issues=issues,
+    )
 
 
 class AuthTests(unittest.TestCase):
@@ -76,6 +148,57 @@ class ClassroomClientTests(unittest.TestCase):
         with self.assertRaises(AgentError) as ctx:
             client.list_courses()
         self.assertEqual(ctx.exception.code, ErrorCode.CLASSROOM_API_RATE_LIMITED)
+
+
+class StructuredHandoffTests(unittest.TestCase):
+    def test_reminder_handoff_defaults_to_unsubmitted_students(self) -> None:
+        response = build_reminder_generation_response(
+            "req_google_handoff",
+            _sample_analysis(),
+            reminder_title="課題提出リマインド",
+            reminder_body="まだ提出していない人は提出してください。",
+        )
+
+        reminder = response["outputs"]["classroomReminder"]
+        self.assertEqual(reminder["assigneeMode"], "INDIVIDUAL_STUDENTS")
+        self.assertEqual(reminder["targetStudentIds"], ["student_001"])
+        self.assertIn("投稿対象: 指定生徒 1名", response["outputs"]["markdown"]["content"])
+        self.assertEqual(
+            response["outputs"]["googleDocument"]["blocks"][2]["text"],
+            "未提出者数: 1名 / 投稿対象: 指定生徒 1名 / 口調: polite",
+        )
+
+    def test_reminder_handoff_can_explicitly_target_all_students(self) -> None:
+        response = build_reminder_generation_response(
+            "req_google_all_students",
+            _sample_analysis(),
+            reminder_title="課題提出リマインド",
+            reminder_body="まだ提出していない人は提出してください。",
+            target_student_ids=[],
+        )
+
+        reminder = response["outputs"]["classroomReminder"]
+        self.assertEqual(reminder["assigneeMode"], "ALL_STUDENTS")
+        self.assertEqual(reminder["targetStudentIds"], [])
+        self.assertIn("投稿対象: コース全員", response["outputs"]["markdown"]["content"])
+
+    def test_classroom_request_preserves_individual_targets(self) -> None:
+        response = build_reminder_generation_response(
+            "req_google_request",
+            _sample_analysis(),
+            reminder_title="課題提出リマインド",
+            reminder_body="まだ提出していない人は提出してください。",
+        )
+
+        request = build_classroom_announcement_request(
+            response["outputs"]["classroomReminder"]
+        )
+        self.assertEqual(request.course_id, "123456789")
+        self.assertEqual(request.body["assigneeMode"], "INDIVIDUAL_STUDENTS")
+        self.assertEqual(
+            request.body["individualStudentsOptions"]["studentIds"],
+            ["student_001"],
+        )
 
 
 if __name__ == "__main__":

@@ -160,9 +160,12 @@ class SubmissionEvaluation:
     status_label: str
     due_at: datetime | None
     submitted_at: datetime | None
+    is_submitted: bool
     is_missing: bool
     is_due_soon: bool
     is_late: bool
+    is_returned: bool
+    is_exempt_like: bool
     attachment_missing_possible: bool
     attachment_count: int
     notes: list[str] = field(default_factory=list)
@@ -199,6 +202,14 @@ class SubmissionAnalysis:
     @property
     def late_submissions(self) -> list[SubmissionEvaluation]:
         return [entry for entry in self.evaluations if entry.is_late]
+
+    @property
+    def actual_submitted(self) -> list[SubmissionEvaluation]:
+        return [entry for entry in self.evaluations if entry.is_submitted]
+
+    @property
+    def exempt_like(self) -> list[SubmissionEvaluation]:
+        return [entry for entry in self.evaluations if entry.is_exempt_like]
 
     @property
     def attachment_flags(self) -> list[SubmissionEvaluation]:

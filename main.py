@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import html
 import http.server
 import json
 import socketserver
+import threading
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -33,10 +36,26 @@ from sansan_competition.classroom import (
 )
 from sansan_competition.execution.errors import AgentError, ErrorCode
 from sansan_competition.models import JST
+from sansan_competition.oauth import (
+    GoogleOAuthAuthorizationRequiredError,
+    complete_google_oauth_authorization,
+    default_classroom_post_scopes,
+    default_classroom_read_scopes,
+    load_google_user_credentials,
+    start_google_oauth_authorization,
+)
 
 
 ROOT = Path(__file__).resolve().parent
 PUBLIC_DIR = ROOT / "public"
+OAUTH_CALLBACK_PATH = "/oauth/google/callback"
+OAUTH_SESSION_TTL_SECONDS = 10 * 60
+OAUTH_INTENT_SCOPES = {
+    "read": default_classroom_read_scopes(),
+    "post": default_classroom_post_scopes(),
+}
+OAUTH_SESSIONS: dict[str, dict[str, Any]] = {}
+OAUTH_SESSIONS_LOCK = threading.Lock()
 
 
 class ReusableTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -247,6 +266,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "demo",
             "sample-reminder",
             "sample-course-summary",
+            "sample-ai-input-course-summary",
             "sample-ai-input-reminder",
             "sample-ai-input-weekly-report",
             "sample-partial-analysis",
@@ -411,12 +431,39 @@ def build_contract_error_payload(
     )
 
 
+def cleanup_expired_oauth_sessions() -> None:
+    cutoff = time.time() - OAUTH_SESSION_TTL_SECONDS
+    with OAUTH_SESSIONS_LOCK:
+        expired_states = [
+            state
+            for state, session in OAUTH_SESSIONS.items()
+            if float(session.get("createdAt", 0.0)) < cutoff
+        ]
+        for state in expired_states:
+            OAUTH_SESSIONS.pop(state, None)
+
+
 class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, directory=str(PUBLIC_DIR), **kwargs)
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        if self._is_oauth_callback_request(parsed):
+            self._handle_oauth_callback(parsed)
+            return
+        if parsed.path == "/api/live/oauth/check":
+            self._handle_oauth_check(parsed)
+            return
+        if parsed.path == "/api/live/oauth/start":
+            self._handle_oauth_start(parsed)
+            return
+        if parsed.path == "/api/live/oauth/status":
+            self._handle_oauth_status(parsed)
+            return
+        if parsed.path == OAUTH_CALLBACK_PATH:
+            self._handle_oauth_callback(parsed)
+            return
         if parsed.path == "/api/live/courses":
             self._handle_courses()
             return
@@ -441,7 +488,7 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
     def _handle_courses(self) -> None:
         request_id = build_live_request_id("courses")
         try:
-            client = GoogleClassroomClient.from_oauth()
+            client = GoogleClassroomClient.from_oauth(allow_interactive=False)
             payload = build_course_list_payload(
                 normalize_live_courses(client.list_courses(course_states=["ACTIVE"]))
             )
@@ -469,7 +516,7 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         try:
-            client = GoogleClassroomClient.from_oauth()
+            client = GoogleClassroomClient.from_oauth(allow_interactive=False)
             payload = build_coursework_list_payload(
                 normalize_live_coursework(
                     client.list_coursework(
@@ -503,7 +550,7 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         try:
-            client = GoogleClassroomClient.from_oauth()
+            client = GoogleClassroomClient.from_oauth(allow_interactive=False)
             analysis = fetch_submission_analysis(
                 client,
                 course_id=course_id,
@@ -539,7 +586,7 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         try:
-            client = GoogleClassroomClient.from_oauth()
+            client = GoogleClassroomClient.from_oauth(allow_interactive=False)
             analysis = fetch_submission_analysis(
                 client,
                 course_id=course_id,
@@ -594,7 +641,7 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
                     recoverable=False,
                 )
 
-            client = build_post_only_client()
+            client = build_post_only_client(allow_interactive=False)
             announcement = client.create_announcement_from_output(reminder_output)
             self._send_json(
                 200,
@@ -617,6 +664,268 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
                     "error": error.to_error_item(),
                 },
             )
+
+    def _handle_oauth_check(self, parsed: Any) -> None:
+        request_id = build_live_request_id("oauth_check")
+        intent = self._require_query_value(parsed, "intent")
+        if intent is None:
+            return
+
+        scopes = OAUTH_INTENT_SCOPES.get(intent)
+        if scopes is None:
+            self._send_json(
+                400,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "status": "error",
+                    "error": {
+                        "code": ErrorCode.INVALID_AGENT_OUTPUT,
+                        "message": f"Unsupported OAuth intent: {intent}",
+                        "recoverable": False,
+                    },
+                },
+            )
+            return
+
+        try:
+            load_google_user_credentials(scopes, allow_interactive=False)
+            self._send_json(
+                200,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "status": "authorized",
+                    "intent": intent,
+                },
+            )
+        except GoogleOAuthAuthorizationRequiredError:
+            self._send_json(
+                200,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "status": "authorization_required",
+                    "intent": intent,
+                },
+            )
+        except Exception as exc:
+            error = resolve_agent_error(
+                exc,
+                fallback_code=ErrorCode.GOOGLE_AUTH_EXPIRED,
+            )
+            self._send_json(
+                500,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "status": "error",
+                    "error": error.to_error_item(),
+                },
+            )
+
+    def _handle_oauth_start(self, parsed: Any) -> None:
+        cleanup_expired_oauth_sessions()
+        request_id = build_live_request_id("oauth_start")
+        intent = self._require_query_value(parsed, "intent")
+        if intent is None:
+            return
+
+        scopes = OAUTH_INTENT_SCOPES.get(intent)
+        if scopes is None:
+            self._send_json(
+                400,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "status": "error",
+                    "error": {
+                        "code": ErrorCode.INVALID_AGENT_OUTPUT,
+                        "message": f"Unsupported OAuth intent: {intent}",
+                        "recoverable": False,
+                    },
+                },
+            )
+            return
+
+        try:
+            load_google_user_credentials(scopes, allow_interactive=False)
+            self._send_json(
+                200,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "status": "authorized",
+                    "intent": intent,
+                },
+            )
+        except GoogleOAuthAuthorizationRequiredError:
+            redirect_uri = self._oauth_redirect_uri()
+            auth_request = start_google_oauth_authorization(
+                scopes,
+                redirect_uri=redirect_uri,
+            )
+            with OAUTH_SESSIONS_LOCK:
+                OAUTH_SESSIONS[auth_request.state] = {
+                    "createdAt": time.time(),
+                    "intent": intent,
+                    "redirectUri": redirect_uri,
+                    "scopes": auth_request.scopes,
+                    "codeVerifier": auth_request.code_verifier,
+                    "status": "pending",
+                }
+            self._send_json(
+                200,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "status": "authorization_required",
+                    "intent": intent,
+                    "authorizationUrl": auth_request.authorization_url,
+                    "statusUrl": f"/api/live/oauth/status?state={auth_request.state}",
+                },
+            )
+        except Exception as exc:
+            error = resolve_agent_error(
+                exc,
+                fallback_code=ErrorCode.GOOGLE_AUTH_EXPIRED,
+            )
+            self._send_json(
+                500,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "status": "error",
+                    "error": error.to_error_item(),
+                },
+            )
+
+    def _handle_oauth_status(self, parsed: Any) -> None:
+        cleanup_expired_oauth_sessions()
+        request_id = build_live_request_id("oauth_status")
+        state = self._require_query_value(parsed, "state")
+        if state is None:
+            return
+
+        with OAUTH_SESSIONS_LOCK:
+            session = dict(OAUTH_SESSIONS.get(state, {}))
+
+        if not session:
+            self._send_json(
+                404,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "status": "error",
+                    "error": {
+                        "code": ErrorCode.GOOGLE_AUTH_EXPIRED,
+                        "message": "OAuth session が見つからないか、期限切れです。",
+                        "recoverable": True,
+                    },
+                },
+            )
+            return
+
+        payload: dict[str, Any] = {
+            "requestId": request_id,
+            "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+            "status": str(session.get("status") or "pending"),
+            "intent": session.get("intent"),
+        }
+        error_item = session.get("error")
+        if isinstance(error_item, dict):
+            payload["error"] = error_item
+        self._send_json(200, payload)
+
+    def _handle_oauth_callback(self, parsed: Any) -> None:
+        cleanup_expired_oauth_sessions()
+        state = self._require_query_value(parsed, "state")
+        if state is None:
+            return
+
+        with OAUTH_SESSIONS_LOCK:
+            session = dict(OAUTH_SESSIONS.get(state, {}))
+
+        if not session:
+            self._send_oauth_callback_page(
+                title="OAuth セッションが見つかりませんでした",
+                message="時間をおいて再度接続を開始してください。",
+                success=False,
+            )
+            return
+
+        query = parse_qs(parsed.query)
+        oauth_error = next(
+            (value.strip() for value in query.get("error", []) if value.strip()),
+            "",
+        )
+        if oauth_error:
+            description = next(
+                (
+                    value.strip()
+                    for value in query.get("error_description", [])
+                    if value.strip()
+                ),
+                oauth_error,
+            )
+            self._update_oauth_session_error(
+                state,
+                AgentError(
+                    ErrorCode.GOOGLE_AUTH_EXPIRED,
+                    message="Google OAuth の許可が完了しませんでした。",
+                    detail=description,
+                ),
+            )
+            self.log_error("OAuth callback denied: %s", description)
+            self._send_oauth_callback_page(
+                title="Google Classroom への接続に失敗しました",
+                message=description,
+                success=False,
+            )
+            return
+
+        try:
+            complete_google_oauth_authorization(
+                session.get("scopes", ()),
+                state=state,
+                authorization_response=self._absolute_request_url(),
+                redirect_uri=str(session.get("redirectUri") or ""),
+                code_verifier=session.get("codeVerifier"),
+            )
+        except Exception as exc:
+            error = resolve_agent_error(
+                exc,
+                fallback_code=ErrorCode.GOOGLE_AUTH_EXPIRED,
+            )
+            self._update_oauth_session_error(state, error)
+            self.log_error(
+                "OAuth callback failed: %s",
+                getattr(error, "detail", None) or error.message,
+            )
+            self._send_oauth_callback_page(
+                title="Google Classroom への接続に失敗しました",
+                message=error.message,
+                success=False,
+            )
+            return
+
+        with OAUTH_SESSIONS_LOCK:
+            if state in OAUTH_SESSIONS:
+                OAUTH_SESSIONS[state]["status"] = "completed"
+                OAUTH_SESSIONS[state]["completedAt"] = time.time()
+                OAUTH_SESSIONS[state].pop("error", None)
+
+        self._send_oauth_callback_page(
+            title="Google Classroom への接続が完了しました",
+            message="このウィンドウは自動で閉じます。閉じない場合は手動で閉じてください。",
+            success=True,
+        )
+
+    def _update_oauth_session_error(self, state: str, error: AgentError) -> None:
+        with OAUTH_SESSIONS_LOCK:
+            if state in OAUTH_SESSIONS:
+                OAUTH_SESSIONS[state]["status"] = "error"
+                OAUTH_SESSIONS[state]["error"] = error.to_error_item()
 
     def _require_query_value(self, parsed: Any, key: str) -> str | None:
         values = parse_qs(parsed.query).get(key, [])
@@ -664,6 +973,77 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_html(self, status_code: int, body: str) -> None:
+        encoded = body.encode("utf-8")
+        self.send_response(status_code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def _send_oauth_callback_page(
+        self,
+        *,
+        title: str,
+        message: str,
+        success: bool,
+    ) -> None:
+        accent = "#188038" if success else "#b3261e"
+        escaped_title = html.escape(title)
+        escaped_message = html.escape(message)
+        body = f"""<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{escaped_title}</title>
+  </head>
+  <body style="margin:0;background:#f8fafd;color:#202124;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+    <main style="display:grid;min-height:100vh;place-items:center;padding:24px;">
+      <section style="width:min(100%,520px);padding:28px;border:1px solid #dadce0;border-radius:12px;background:#ffffff;box-shadow:0 8px 22px rgba(60,64,67,0.08);">
+        <p style="margin:0 0 8px;color:{accent};font-size:13px;font-weight:700;">Google Classroom OAuth</p>
+        <h1 style="margin:0 0 12px;font-size:24px;">{escaped_title}</h1>
+        <p style="margin:0;color:#5f6368;line-height:1.7;">{escaped_message}</p>
+      </section>
+    </main>
+    <script>
+      if (window.opener && window.location.origin === window.opener.location.origin) {{
+        window.opener.postMessage({{ type: "sansan-oauth-complete", success: {str(success).lower()} }}, window.location.origin);
+      }}
+      if ({str(success).lower()}) {{
+        setTimeout(() => window.close(), 1200);
+      }}
+    </script>
+  </body>
+</html>"""
+        self._send_html(200, body)
+
+    def _server_base_url(self) -> str:
+        host = (self.headers.get("Host") or "").strip()
+        if not host:
+            server_host, server_port = self.server.server_address[:2]
+            host = f"{server_host}:{server_port}"
+        return f"http://{host}"
+
+    def _absolute_request_url(self) -> str:
+        return f"{self._server_base_url()}{self.path}"
+
+    def _oauth_redirect_uri(self) -> str:
+        _, server_port = self.server.server_address[:2]
+        return f"http://localhost:{server_port}"
+
+    def _is_oauth_callback_request(self, parsed: Any) -> bool:
+        if parsed.path == OAUTH_CALLBACK_PATH:
+            return True
+        if parsed.path not in ("", "/"):
+            return False
+        query = parse_qs(parsed.query)
+        has_state = any(value.strip() for value in query.get("state", []))
+        has_result = any(value.strip() for value in query.get("code", [])) or any(
+            value.strip() for value in query.get("error", [])
+        )
+        return has_state and has_result
+
 
 def serve_gui(host: str, port: int) -> None:
     with ReusableTCPServer((host, port), ClassroomPrototypeHandler) as server:
@@ -688,6 +1068,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "sample-course-summary":
         payload = build_gui_sample_payload(AgentTaskType.COURSE_SUMMARY)
         print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    if args.command == "sample-ai-input-course-summary":
+        payload = build_ai_task_input(
+            AgentTaskType.COURSE_SUMMARY,
+            analysis,
+            tone="formal",
+            teacher_instruction="未提出と遅延の傾向を簡潔に整理してください。",
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "sample-ai-input-reminder":

@@ -10,34 +10,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
-ALLOWED_AGENT_TASK_TYPES = {
-    "COURSE_SUMMARY",
-    "COURSEWORK_SUMMARY",
-    "SUBMISSION_ANALYSIS",
-    "REMINDER_GENERATION",
-    "WEEKLY_REPORT",
-    "ANNOUNCEMENT_DRAFT",
-    "DOCUMENT_EXPORT",
-    "RUBRIC_SUPPORT",
-    "ERROR_ANALYSIS",
-}
+from .contracts import (
+    ALLOWED_AGENT_TASK_TYPES,
+    ALLOWED_STATUSES,
+    COMMON_APPROVAL_KEYS,
+    COMMON_GUI_KEYS,
+    COMMON_OUTPUT_KEYS,
+    COMMON_TOP_LEVEL_KEYS,
+    SCHEMA_VERSION,
+)
 
-COMMON_TOP_LEVEL_KEYS = {
-    "schemaVersion",
-    "requestId",
-    "generatedAt",
-    "agentTaskType",
-    "status",
-    "course",
-    "summary",
-    "gui",
-    "outputs",
-    "approval",
-    "errors",
-}
-COMMON_GUI_KEYS = {"cards", "tables", "warnings", "editableFields"}
-COMMON_OUTPUT_KEYS = {"markdown", "pdf", "googleDocument", "classroomReminder"}
-COMMON_APPROVAL_KEYS = {"required", "reason", "actions"}
 CACHE_DIR_NAME = "__pycache__"
 CACHE_SUFFIXES = {".pyc", ".pyo"}
 COMMENT_MARKER = "<!-- pr-automation-report -->"
@@ -182,7 +164,7 @@ class AgentOutput:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schemaVersion": "1.0.0",
+            "schemaVersion": SCHEMA_VERSION,
             "requestId": self.request_id,
             "generatedAt": self.generated_at,
             "agentTaskType": self.agent_task_type,
@@ -957,14 +939,15 @@ def validate_agent_output_dict(payload: dict[str, Any]) -> list[str]:
     if missing:
         errors.append("missing required top-level keys: " + ", ".join(sorted(missing)))
         return errors
-    if payload.get("schemaVersion") != "1.0.0":
+    if payload.get("schemaVersion") != SCHEMA_VERSION:
         errors.append("unsupported schemaVersion")
     if payload.get("agentTaskType") not in ALLOWED_AGENT_TASK_TYPES:
         errors.append("unsupported agentTaskType")
-    if payload.get("status") not in {"success", "error"}:
+    if payload.get("status") not in ALLOWED_STATUSES:
         errors.append("unsupported status")
-    if not isinstance(payload.get("course"), dict):
-        errors.append("course must be an object")
+    course = payload.get("course")
+    if course is not None and not isinstance(course, dict):
+        errors.append("course must be an object or null")
     if not isinstance(payload.get("gui"), dict):
         errors.append("gui must be an object")
     if not isinstance(payload.get("outputs"), dict):
@@ -1002,54 +985,6 @@ def remove_cache_artifacts(paths: Sequence[Path]) -> list[str]:
             path.unlink()
         removed.append(str(path))
     return removed
-
-def validate_common_contract(payload: dict[str, Any]) -> list[str]:
-    issues = validate_agent_output_dict(payload)
-
-    missing_top_level = COMMON_TOP_LEVEL_KEYS - payload.keys()
-    if missing_top_level:
-        issues.append(
-            "missing common top-level keys: "
-            + ", ".join(sorted(missing_top_level))
-        )
-
-    course = payload.get("course")
-    if not isinstance(course, dict):
-        issues.append("course must be an object")
-
-    gui = payload.get("gui")
-    if not isinstance(gui, dict):
-        issues.append("gui must be an object")
-    else:
-        missing_gui = COMMON_GUI_KEYS - gui.keys()
-        if missing_gui:
-            issues.append("gui missing keys: " + ", ".join(sorted(missing_gui)))
-
-    outputs = payload.get("outputs")
-    if not isinstance(outputs, dict):
-        issues.append("outputs must be an object")
-    else:
-        missing_outputs = COMMON_OUTPUT_KEYS - outputs.keys()
-        if missing_outputs:
-            issues.append(
-                "outputs missing keys: " + ", ".join(sorted(missing_outputs))
-            )
-
-    approval = payload.get("approval")
-    if not isinstance(approval, dict):
-        issues.append("approval must be an object")
-    else:
-        missing_approval = COMMON_APPROVAL_KEYS - approval.keys()
-        if missing_approval:
-            issues.append(
-                "approval missing keys: " + ", ".join(sorted(missing_approval))
-            )
-
-    errors = payload.get("errors")
-    if not isinstance(errors, list):
-        issues.append("errors must be an array")
-
-    return issues
 
 
 def run_command(args: Sequence[str], *, repo_root: Path) -> tuple[int, str]:
@@ -1108,31 +1043,56 @@ def run_cli_contract_checks(tool_root: Path) -> CheckResult:
     return CheckResult(name="cli-contract", passed=passed, details=details)
 
 
+def run_kimu_regression_gate_check(tool_root: Path) -> CheckResult:
+    returncode, output = run_command(
+        [sys.executable, "scripts/kimu_regression_gate.py"],
+        repo_root=tool_root,
+    )
+    return CheckResult(
+        name="kimu-regression-gate",
+        passed=returncode == 0,
+        details=[output or "kimu regression gate completed without output"],
+    )
+
+
 def validate_common_contract(payload: dict[str, Any]) -> list[str]:
     issues = validate_agent_output_dict(payload)
     missing_top_level = COMMON_TOP_LEVEL_KEYS - payload.keys()
     if missing_top_level:
         issues.append("missing common top-level keys: " + ", ".join(sorted(missing_top_level)))
-    course = payload.get("course")
-    if not isinstance(course, dict):
-        issues.append("course must be an object")
-    gui = payload.get("gui")
-    if not isinstance(gui, dict):
-        issues.append("gui must be an object")
-    elif COMMON_GUI_KEYS - gui.keys():
-        issues.append("gui missing keys: " + ", ".join(sorted(COMMON_GUI_KEYS - gui.keys())))
-    outputs = payload.get("outputs")
-    if not isinstance(outputs, dict):
-        issues.append("outputs must be an object")
-    elif COMMON_OUTPUT_KEYS - outputs.keys():
-        issues.append("outputs missing keys: " + ", ".join(sorted(COMMON_OUTPUT_KEYS - outputs.keys())))
-    approval = payload.get("approval")
-    if not isinstance(approval, dict):
-        issues.append("approval must be an object")
-    elif COMMON_APPROVAL_KEYS - approval.keys():
-        issues.append("approval missing keys: " + ", ".join(sorted(COMMON_APPROVAL_KEYS - approval.keys())))
-    errors = payload.get("errors")
-    if not isinstance(errors, list):
+    if "course" in payload:
+        course = payload.get("course")
+        if course is not None and not isinstance(course, dict):
+            issues.append("course must be an object or null")
+    if "gui" in payload:
+        gui = payload.get("gui")
+        if not isinstance(gui, dict):
+            issues.append("gui must be an object")
+        else:
+            missing_gui = COMMON_GUI_KEYS - gui.keys()
+            if missing_gui:
+                issues.append("gui missing keys: " + ", ".join(sorted(missing_gui)))
+    if "outputs" in payload:
+        outputs = payload.get("outputs")
+        if not isinstance(outputs, dict):
+            issues.append("outputs must be an object")
+        else:
+            missing_outputs = COMMON_OUTPUT_KEYS - outputs.keys()
+            if missing_outputs:
+                issues.append(
+                    "outputs missing keys: " + ", ".join(sorted(missing_outputs))
+                )
+    if "approval" in payload:
+        approval = payload.get("approval")
+        if not isinstance(approval, dict):
+            issues.append("approval must be an object")
+        else:
+            missing_approval = COMMON_APPROVAL_KEYS - approval.keys()
+            if missing_approval:
+                issues.append(
+                    "approval missing keys: " + ", ".join(sorted(missing_approval))
+                )
+    if "errors" in payload and not isinstance(payload.get("errors"), list):
         issues.append("errors must be an array")
     return issues
 
@@ -1199,6 +1159,7 @@ def build_report(repo_root: Path, *, apply_fixes: bool, tool_root: Path | None =
         run_repo_hygiene_check(repo_root),
         run_pytest(repo_root),
         run_cli_contract_checks(tool_root),
+        run_kimu_regression_gate_check(tool_root),
         run_agent_task_contract_checks(),
     ]
 

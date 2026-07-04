@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import types
 import unittest
 from urllib import error, request
 from unittest.mock import patch
@@ -59,6 +60,8 @@ class LiveApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self._original_log_message = app_main.ClassroomPrototypeHandler.log_message
         app_main.ClassroomPrototypeHandler.log_message = lambda *args: None
+        with app_main.OAUTH_SESSIONS_LOCK:
+            app_main.OAUTH_SESSIONS.clear()
         self.server = app_main.ReusableTCPServer(
             ("127.0.0.1", 0),
             app_main.ClassroomPrototypeHandler,
@@ -76,6 +79,8 @@ class LiveApiTests(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=5)
+        with app_main.OAUTH_SESSIONS_LOCK:
+            app_main.OAUTH_SESSIONS.clear()
         app_main.ClassroomPrototypeHandler.log_message = self._original_log_message
 
     def _request_json(
@@ -107,6 +112,19 @@ class LiveApiTests(unittest.TestCase):
             exc.close()
 
         return status_code, json.loads(response_body.decode("utf-8"))
+
+    def _request_raw(self, path: str) -> tuple[int, str]:
+        req = request.Request(f"{self.base_url}{path}", method="GET")
+        try:
+            with request.urlopen(req) as response:
+                status_code = response.status
+                response_body = response.read().decode("utf-8")
+        except error.HTTPError as exc:
+            status_code = exc.code
+            response_body = exc.read().decode("utf-8")
+            exc.close()
+
+        return status_code, response_body
 
     def test_courses_endpoint_returns_normalized_items(self) -> None:
         fake_client = FakeCourseClient(
@@ -199,6 +217,137 @@ class LiveApiTests(unittest.TestCase):
         self.assertEqual(status_code, 500)
         self.assertEqual(payload["items"], [])
         self.assertEqual(payload["error"]["code"], "CLASSROOM_API_NOT_FOUND")
+
+    def test_oauth_start_reports_authorized_when_cached_token_is_ready(self) -> None:
+        with patch.object(
+            app_main,
+            "load_google_user_credentials",
+            return_value=object(),
+        ):
+            status_code, payload = self._request_json("/api/live/oauth/start?intent=read")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["status"], "authorized")
+        self.assertEqual(payload["intent"], "read")
+
+    def test_oauth_check_reports_authorized_when_cached_token_is_ready(self) -> None:
+        with patch.object(
+            app_main,
+            "load_google_user_credentials",
+            return_value=object(),
+        ):
+            status_code, payload = self._request_json("/api/live/oauth/check?intent=read")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["status"], "authorized")
+        self.assertEqual(payload["intent"], "read")
+
+    def test_oauth_check_reports_authorization_required_without_creating_session(self) -> None:
+        with patch.object(
+            app_main,
+            "load_google_user_credentials",
+            side_effect=app_main.GoogleOAuthAuthorizationRequiredError("required"),
+        ):
+            status_code, payload = self._request_json("/api/live/oauth/check?intent=read")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["status"], "authorization_required")
+        self.assertEqual(payload["intent"], "read")
+        with app_main.OAUTH_SESSIONS_LOCK:
+            self.assertEqual(app_main.OAUTH_SESSIONS, {})
+
+    def test_oauth_start_returns_authorization_url_when_grant_is_required(self) -> None:
+        auth_request = types.SimpleNamespace(
+            authorization_url="https://accounts.example.test/auth",
+            state="oauth-state-123",
+            scopes=app_main.OAUTH_INTENT_SCOPES["read"],
+            code_verifier="verifier-123",
+        )
+
+        with (
+            patch.object(
+                app_main,
+                "load_google_user_credentials",
+                side_effect=app_main.GoogleOAuthAuthorizationRequiredError("required"),
+            ),
+            patch.object(
+                app_main,
+                "start_google_oauth_authorization",
+                return_value=auth_request,
+            ),
+        ):
+            status_code, payload = self._request_json("/api/live/oauth/start?intent=read")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["status"], "authorization_required")
+        self.assertEqual(
+            payload["authorizationUrl"],
+            "https://accounts.example.test/auth",
+        )
+        self.assertEqual(
+            payload["statusUrl"],
+            "/api/live/oauth/status?state=oauth-state-123",
+        )
+        with app_main.OAUTH_SESSIONS_LOCK:
+            self.assertEqual(
+                app_main.OAUTH_SESSIONS["oauth-state-123"]["scopes"],
+                app_main.OAUTH_INTENT_SCOPES["read"],
+            )
+            self.assertEqual(
+                app_main.OAUTH_SESSIONS["oauth-state-123"]["codeVerifier"],
+                "verifier-123",
+            )
+
+    def test_oauth_status_returns_pending_session(self) -> None:
+        with app_main.OAUTH_SESSIONS_LOCK:
+            app_main.OAUTH_SESSIONS["oauth-state-123"] = {
+                "createdAt": 9999999999.0,
+                "intent": "read",
+                "redirectUri": "http://127.0.0.1:8000/oauth/google/callback",
+                "scopes": app_main.OAUTH_INTENT_SCOPES["read"],
+                "status": "pending",
+            }
+
+        status_code, payload = self._request_json(
+            "/api/live/oauth/status?state=oauth-state-123"
+        )
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["status"], "pending")
+        self.assertEqual(payload["intent"], "read")
+
+    def test_oauth_callback_marks_session_completed(self) -> None:
+        with app_main.OAUTH_SESSIONS_LOCK:
+            app_main.OAUTH_SESSIONS["oauth-state-123"] = {
+                "createdAt": 9999999999.0,
+                "intent": "read",
+                "redirectUri": "http://localhost:8000",
+                "scopes": app_main.OAUTH_INTENT_SCOPES["read"],
+                "codeVerifier": "verifier-123",
+                "status": "pending",
+            }
+
+        with patch.object(
+            app_main,
+            "complete_google_oauth_authorization",
+            return_value=object(),
+        ) as complete_auth:
+            status_code, body = self._request_raw(
+                "/?state=oauth-state-123&code=example"
+            )
+
+        self.assertEqual(status_code, 200)
+        self.assertIn("Google Classroom への接続が完了しました", body)
+        complete_auth.assert_called_once()
+        self.assertEqual(
+            complete_auth.call_args.kwargs["code_verifier"],
+            "verifier-123",
+        )
+        with app_main.OAUTH_SESSIONS_LOCK:
+            self.assertEqual(
+                app_main.OAUTH_SESSIONS["oauth-state-123"]["status"],
+                "completed",
+            )
 
     def test_submission_analysis_endpoint_returns_contract_valid_payload(self) -> None:
         with (

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import json
 from pathlib import Path
+from typing import Any
 import unittest
 
 from sansan_competition.contract import (
@@ -13,7 +14,15 @@ from sansan_competition.contract import (
     load_contract_schema,
     validate_agent_output,
 )
-from sansan_competition.contracts import ALLOWED_AGENT_TASK_TYPES
+from sansan_competition.contracts import (
+    ALLOWED_AGENT_TASK_TYPES,
+    ALLOWED_STATUSES,
+    COMMON_APPROVAL_KEYS,
+    COMMON_GUI_KEYS,
+    COMMON_OUTPUT_KEYS,
+    COMMON_TOP_LEVEL_KEYS,
+    SCHEMA_VERSION,
+)
 from sansan_competition.models import AgentTaskType, JST
 from sansan_competition.normalization import (
     normalize_course,
@@ -25,6 +34,7 @@ from sansan_competition.analysis import analyze_submissions
 
 class ContractTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.generated_at = datetime(2026, 7, 3, 13, 0, tzinfo=JST)
         course = normalize_course(
             {
                 "id": "123456789",
@@ -79,17 +89,93 @@ class ContractTests(unittest.TestCase):
             ]
         )
         self.course = course
+        self.course_work = course_work
+        self.submissions = submissions
         self.analysis = analyze_submissions(
             course,
             course_work,
             submissions,
-            now=datetime(2026, 7, 3, 13, 0, tzinfo=JST),
+            now=self.generated_at,
             normalization_issues=issues,
+        )
+        partial_course = normalize_course(
+            {
+                "id": "123456789",
+                "name": "数学I",
+                "section": "1年A組",
+                "description": "二次関数の基礎",
+                "teacherIds": ["teacher_001"],
+                "studentCount": 4,
+            }
+        )
+        partial_submissions, partial_issues = normalize_submission_batch(
+            [
+                {
+                    "id": "sub_001",
+                    "courseId": "123456789",
+                    "courseWorkId": "987654321",
+                    "studentId": "student_001",
+                    "studentName": "山田太郎",
+                    "state": "NEW",
+                },
+                {
+                    "id": "sub_002",
+                    "courseId": "123456789",
+                    "courseWorkId": "987654321",
+                    "studentId": "student_002",
+                    "studentName": "佐藤花子",
+                    "state": "TURNED_IN",
+                    "submissionTime": "2026-07-05T20:15:00+09:00",
+                    "attachments": [{"driveFile": {"id": "file_001"}}],
+                },
+                {
+                    "id": "sub_003",
+                    "courseId": "123456789",
+                    "courseWorkId": "987654321",
+                    "studentId": "student_003",
+                    "studentName": "鈴木一郎",
+                    "state": "TURNED_IN",
+                    "submissionTime": "2026-07-06T00:30:00+09:00",
+                    "late": True,
+                },
+                {
+                    "id": "sub_004",
+                    "courseWorkId": "987654321",
+                    "studentId": "student_004",
+                    "studentName": "高橋未来",
+                    "state": "TURNED_IN",
+                },
+            ]
+        )
+        self.partial_analysis = analyze_submissions(
+            partial_course,
+            course_work,
+            partial_submissions,
+            now=self.generated_at,
+            normalization_issues=partial_issues,
         )
 
     def test_schema_file_loads(self) -> None:
         schema = load_contract_schema()
-        self.assertEqual(schema["properties"]["schemaVersion"]["const"], "1.0.0")
+        self.assertEqual(schema["properties"]["schemaVersion"]["const"], SCHEMA_VERSION)
+        self.assertEqual(
+            set(schema["properties"]["agentTaskType"]["enum"]),
+            set(ALLOWED_AGENT_TASK_TYPES),
+        )
+        self.assertEqual(
+            set(schema["properties"]["status"]["enum"]),
+            set(ALLOWED_STATUSES),
+        )
+        self.assertEqual(set(schema["required"]), set(COMMON_TOP_LEVEL_KEYS))
+        self.assertEqual(set(schema["$defs"]["gui"]["required"]), set(COMMON_GUI_KEYS))
+        self.assertEqual(
+            set(schema["$defs"]["outputs"]["required"]),
+            set(COMMON_OUTPUT_KEYS),
+        )
+        self.assertEqual(
+            set(schema["$defs"]["approval"]["required"]),
+            set(COMMON_APPROVAL_KEYS),
+        )
 
     def test_submission_analysis_response_passes_validator(self) -> None:
         response = build_submission_analysis_response(
@@ -129,75 +215,127 @@ class ContractTests(unittest.TestCase):
             with self.subTest(sample=sample_file.name):
                 self.assertEqual(validate_agent_output(payload), [])
 
-    def test_build_agent_output_supports_all_allowed_task_types(self) -> None:
-        course_work = self.analysis.course_work
-        submissions = [
-            normalize_submission_batch(
-                [
-                    {
-                        "id": "sub_001",
-                        "courseId": "123456789",
-                        "courseWorkId": course_work.course_work_id,
-                        "studentId": "student_001",
-                        "studentName": "山田太郎",
-                        "state": "NEW",
-                    }
-                ]
-            )[0][0]
-        ]
+    def test_sample_json_files_cover_all_allowed_task_types(self) -> None:
+        sample_task_types = {
+            json.loads(sample_file.read_text())["agentTaskType"]
+            for sample_file in (Path(__file__).resolve().parent.parent / "samples").glob(
+                "*.json"
+            )
+        }
+        self.assertEqual(sample_task_types, set(ALLOWED_AGENT_TASK_TYPES))
 
+    def test_sample_json_files_match_representative_payloads(self) -> None:
+        samples_dir = Path(__file__).resolve().parent.parent / "samples"
+        expected_samples = self._expected_samples()
+        self.assertEqual(
+            {sample_file.name for sample_file in samples_dir.glob("*.json")},
+            set(expected_samples),
+        )
+
+        for sample_name, expected_payload in expected_samples.items():
+            actual_payload = json.loads((samples_dir / sample_name).read_text())
+            with self.subTest(sample=sample_name):
+                self.assertEqual(actual_payload, expected_payload)
+
+    def test_build_agent_output_supports_all_allowed_task_types(self) -> None:
         for task_type in sorted(ALLOWED_AGENT_TASK_TYPES):
             payload = build_agent_output(
                 task_type,
                 request_id=f"req_{task_type.lower()}",
                 course=self.course,
-                coursework=course_work,
-                submissions=submissions,
+                coursework=self.course_work,
+                submissions=self.submissions,
                 tone="polite",
                 teacher_instruction="必要なら補足してください。",
                 extra_notes="test",
-                generated_at=datetime(2026, 7, 3, 13, 0, tzinfo=JST),
+                generated_at=self.generated_at,
             ).to_dict()
             with self.subTest(task_type=task_type):
                 self.assertEqual(validate_agent_output(payload), [])
 
     def test_partial_success_response_contains_warning_and_error(self) -> None:
-        submissions, issues = normalize_submission_batch(
-            [
-                {
-                    "id": "sub_001",
-                    "courseId": "123456789",
-                    "courseWorkId": "987654321",
-                    "studentId": "student_001",
-                    "studentName": "山田太郎",
-                    "state": "NEW",
-                },
-                {
-                    "id": "sub_002",
-                    "courseWorkId": "987654321",
-                    "studentId": "student_002",
-                    "studentName": "佐藤花子",
-                    "state": "TURNED_IN",
-                },
-            ]
-        )
-        analysis = analyze_submissions(
-            self.course,
-            self.analysis.course_work,
-            submissions,
-            now=datetime(2026, 7, 3, 13, 0, tzinfo=JST),
-            normalization_issues=issues,
-        )
-
         payload = build_submission_analysis_response(
             "req_test_partial_analysis",
-            analysis,
+            self.partial_analysis,
         )
 
         self.assertEqual(payload["status"], "partial_success")
         self.assertEqual(payload["errors"][0]["code"], "PARTIAL_CLASSROOM_DATA")
-        self.assertEqual(payload["gui"]["warnings"][0]["level"], "high")
+        self.assertIn(
+            "high",
+            [warning["level"] for warning in payload["gui"]["warnings"]],
+        )
         self.assertEqual(validate_agent_output(payload), [])
+
+    def test_validator_requires_nullable_course_key(self) -> None:
+        payload = build_submission_analysis_response(
+            "req_test_submission_analysis",
+            self.analysis,
+        )
+        del payload["course"]
+        self.assertIn("course is required.", validate_agent_output(payload))
+
+    def _expected_samples(self) -> dict[str, dict[str, Any]]:
+        generic_sample_request_ids = {
+            AgentTaskType.ANNOUNCEMENT_DRAFT: "req_20260703_sample_announcement_draft",
+            AgentTaskType.COURSEWORK_SUMMARY: "req_20260703_sample_coursework_summary",
+            AgentTaskType.COURSE_SUMMARY: "req_20260703_sample_course_summary",
+            AgentTaskType.DOCUMENT_EXPORT: "req_20260703_sample_document_export",
+            AgentTaskType.ERROR_ANALYSIS: "req_20260703_sample_error_analysis",
+            AgentTaskType.RUBRIC_SUPPORT: "req_20260703_sample_rubric_support",
+            AgentTaskType.WEEKLY_REPORT: "req_20260703_sample_weekly_report",
+        }
+        samples = {
+            "reminder_generation_partial_success.json": build_reminder_generation_response(
+                "req_partial_reminder",
+                self.partial_analysis,
+                reminder_title="課題提出リマインド",
+                reminder_body=(
+                    "提出データの一部が取得できていません。確認できた範囲で、"
+                    "まだ提出していない人は7月5日までに提出してください。"
+                ),
+            ),
+            "reminder_generation_success.json": build_reminder_generation_response(
+                "req_20260703_sample_reminder",
+                self.analysis,
+                reminder_title="課題提出リマインド",
+                reminder_body=(
+                    "課題「二次関数プリント」の提出期限が近づいています。"
+                    "まだ提出していない人は、7月5日までに提出してください。"
+                ),
+            ),
+            "submission_analysis_error.json": build_error_response(
+                "req_20260703_sample_error",
+                AgentTaskType.SUBMISSION_ANALYSIS,
+                title="提出状況の取得に失敗しました",
+                short_summary="Google Classroom APIから提出状況を取得できませんでした。",
+                recommended_action=(
+                    "Googleアカウントの権限を確認し、再度実行してください。"
+                ),
+                error_code="CLASSROOM_API_PERMISSION_DENIED",
+                error_message="提出状況を取得する権限がありません。",
+                course=self.course,
+                generated_at=datetime(2026, 7, 3, 13, 10, tzinfo=JST),
+            ),
+            "submission_analysis_partial_success.json": build_submission_analysis_response(
+                "req_partial_analysis",
+                self.partial_analysis,
+            ),
+            "submission_analysis_success.json": build_submission_analysis_response(
+                "req_20260703_sample_analysis",
+                self.analysis,
+            ),
+        }
+        for task_type, request_id in generic_sample_request_ids.items():
+            samples[f"{task_type.value.lower()}_success.json"] = build_agent_output(
+                task_type,
+                request_id=request_id,
+                course=self.course,
+                coursework=self.course_work,
+                submissions=self.submissions,
+                generated_at=self.generated_at,
+            ).to_dict()
+        return samples
 
 
 if __name__ == "__main__":

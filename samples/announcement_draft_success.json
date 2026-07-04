@@ -1,9 +1,9 @@
 {
   "schemaVersion": "1.0.0",
-  "requestId": "req_partial_reminder",
+  "requestId": "req_20260703_sample_announcement_draft",
   "generatedAt": "2026-07-03T13:00:00+09:00",
-  "agentTaskType": "REMINDER_GENERATION",
-  "status": "partial_success",
+  "agentTaskType": "ANNOUNCEMENT_DRAFT",
+  "status": "success",
   "course": {
     "courseId": "123456789",
     "name": "数学I",
@@ -13,13 +13,13 @@
     "teacherIds": [
       "teacher_001"
     ],
-    "studentCount": 4
+    "studentCount": 3
   },
   "summary": {
-    "title": "課題提出リマインド",
-    "shortSummary": "二次関数プリント の未提出者 1名に向けたリマインド案です。",
+    "title": "数学I お知らせ案",
+    "shortSummary": "二次関数プリント に関する全体向けお知らせ案です。",
     "teacherActionRequired": true,
-    "recommendedAction": "内容を確認し、必要に応じて教師承認後に投稿してください。"
+    "recommendedAction": "本文を確認し、必要であれば教師承認後に投稿してください。"
   },
   "gui": {
     "cards": [
@@ -48,7 +48,7 @@
     "tables": [
       {
         "tableId": "table_submission_status",
-        "title": "リマインド対象一覧",
+        "title": "提出状況一覧",
         "columns": [
           {
             "key": "studentName",
@@ -81,6 +81,26 @@
             "submittedAt": null,
             "attachmentCount": 0,
             "notes": ""
+          },
+          {
+            "studentId": "student_003",
+            "studentName": "鈴木一郎",
+            "status": "遅延提出",
+            "rawState": "TURNED_IN",
+            "dueDate": "2026-07-05",
+            "submittedAt": "2026-07-06T00:30:00+09:00",
+            "attachmentCount": 0,
+            "notes": "締切後に提出されています。 / 提出済みですが添付不足の可能性があります。"
+          },
+          {
+            "studentId": "student_002",
+            "studentName": "佐藤花子",
+            "status": "提出済み",
+            "rawState": "TURNED_IN",
+            "dueDate": "2026-07-05",
+            "submittedAt": "2026-07-05T20:15:00+09:00",
+            "attachmentCount": 1,
+            "notes": ""
           }
         ]
       }
@@ -91,27 +111,16 @@
         "message": "添付不足の可能性がある提出物があります。必ず実際の提出内容を確認してください。"
       },
       {
-        "level": "high",
-        "message": "一部データの正規化に失敗しました。集計結果が完全でない可能性があります。"
-      },
-      {
         "level": "medium",
         "message": "生徒個人名を含むため、共有範囲と投稿本文の内容に注意してください。"
       }
     ],
     "editableFields": [
       {
-        "fieldId": "reminder_title",
-        "label": "リマインドタイトル",
-        "type": "text",
-        "value": "課題提出リマインド",
-        "required": true
-      },
-      {
-        "fieldId": "reminder_body",
-        "label": "リマインド本文",
+        "fieldId": "announcement_body",
+        "label": "お知らせ本文",
         "type": "textarea",
-        "value": "提出データの一部が取得できていません。確認できた範囲で、まだ提出していない人は7月5日までに提出してください。",
+        "value": "課題「二次関数プリント」の提出状況を確認しました。まだ提出していない人は、締切までに提出してください。",
         "required": true
       }
     ]
@@ -119,12 +128,12 @@
   "outputs": {
     "markdown": {
       "fileName": "数学I_reminder_draft.md",
-      "title": "課題提出リマインド",
-      "content": "# 課題提出リマインド\n\n## 対象\n- コース: 数学I / 1年A組\n- 課題: 二次関数プリント\n- 未提出者数: 1名\n- 投稿対象: 指定生徒 1名\n- 口調: polite\n\n## 投稿案\n提出データの一部が取得できていません。確認できた範囲で、まだ提出していない人は7月5日までに提出してください。\n\n## 教師向け注意\n- Classroom投稿前に内容と対象コースを確認してください。\n- 生徒個人名は本文に含めない想定です。"
+      "title": "二次関数プリント に関するお知らせ案",
+      "content": "# 二次関数プリント に関するお知らせ案\n\n## 対象\n- コース: 数学I / 1年A組\n- 課題: 二次関数プリント\n- 未提出者数: 1名\n- 投稿対象: 指定生徒 1名\n- 口調: polite\n\n## 投稿案\n課題「二次関数プリント」の提出状況を確認しました。まだ提出していない人は、締切までに提出してください。\n\n## 教師向け注意\n- Classroom投稿前に内容と対象コースを確認してください。\n- 生徒個人名は本文に含めない想定です。"
     },
     "pdf": {
       "fileName": "数学I_reminder_draft.pdf",
-      "title": "課題提出リマインド",
+      "title": "二次関数プリント に関するお知らせ案",
       "layout": "notice",
       "sections": [
         {
@@ -133,7 +142,7 @@
         },
         {
           "heading": "投稿案",
-          "body": "提出データの一部が取得できていません。確認できた範囲で、まだ提出していない人は7月5日までに提出してください。"
+          "body": "課題「二次関数プリント」の提出状況を確認しました。まだ提出していない人は、締切までに提出してください。"
         },
         {
           "heading": "注意事項",
@@ -142,12 +151,12 @@
       ]
     },
     "googleDocument": {
-      "title": "課題提出リマインド 2026-07-03",
+      "title": "二次関数プリント に関するお知らせ案 2026-07-03",
       "documentType": "announcement_draft",
       "blocks": [
         {
           "type": "heading1",
-          "text": "課題提出リマインド"
+          "text": "二次関数プリント に関するお知らせ案"
         },
         {
           "type": "paragraph",
@@ -163,7 +172,7 @@
         },
         {
           "type": "paragraph",
-          "text": "提出データの一部が取得できていません。確認できた範囲で、まだ提出していない人は7月5日までに提出してください。"
+          "text": "課題「二次関数プリント」の提出状況を確認しました。まだ提出していない人は、締切までに提出してください。"
         },
         {
           "type": "heading2",
@@ -184,8 +193,8 @@
         "courseWorkId": "987654321"
       },
       "postType": "announcement",
-      "title": "課題提出リマインド",
-      "text": "提出データの一部が取得できていません。確認できた範囲で、まだ提出していない人は7月5日までに提出してください。",
+      "title": "二次関数プリント に関するお知らせ案",
+      "text": "課題「二次関数プリント」の提出状況を確認しました。まだ提出していない人は、締切までに提出してください。",
       "materials": [],
       "scheduledTime": null,
       "assigneeMode": "INDIVIDUAL_STUDENTS",
@@ -197,12 +206,12 @@
   },
   "approval": {
     "required": true,
-    "reason": "Classroomへの投稿を行うため、教師の承認が必要です。",
+    "reason": "Classroomへの投稿候補を含むため、教師の承認が必要です。",
     "actions": [
       {
         "actionId": "action_create_classroom_announcement",
         "type": "CREATE_CLASSROOM_ANNOUNCEMENT",
-        "label": "Classroomにリマインドを投稿",
+        "label": "Classroomにお知らせを投稿",
         "requiresConfirmation": true,
         "payloadRef": "outputs.classroomReminder"
       },
@@ -212,21 +221,8 @@
         "label": "Markdownとして出力",
         "requiresConfirmation": false,
         "payloadRef": "outputs.markdown"
-      },
-      {
-        "actionId": "action_export_pdf",
-        "type": "EXPORT_PDF",
-        "label": "PDFとして出力",
-        "requiresConfirmation": false,
-        "payloadRef": "outputs.pdf"
       }
     ]
   },
-  "errors": [
-    {
-      "code": "PARTIAL_CLASSROOM_DATA",
-      "message": "Missing required string field: courseId.",
-      "recoverable": true
-    }
-  ]
+  "errors": []
 }

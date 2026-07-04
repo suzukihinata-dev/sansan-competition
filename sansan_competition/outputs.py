@@ -27,31 +27,39 @@ def build_reminder_outputs(
     target_student_ids: list[str] | None = None,
     scheduled_time: str | None = None,
 ) -> dict[str, Any]:
+    resolved_target_student_ids = _resolve_target_student_ids(
+        analysis,
+        target_student_ids,
+    )
+    audience_label = _reminder_audience_label(resolved_target_student_ids)
     return {
         "markdown": _build_reminder_markdown_output(
             analysis,
             reminder_title=reminder_title,
             reminder_body=reminder_body,
             tone=tone,
+            audience_label=audience_label,
         ),
         "pdf": _build_reminder_pdf_output(
             analysis,
             reminder_title=reminder_title,
             reminder_body=reminder_body,
             tone=tone,
+            audience_label=audience_label,
         ),
         "googleDocument": _build_reminder_google_document_output(
             analysis,
             reminder_title=reminder_title,
             reminder_body=reminder_body,
             tone=tone,
+            audience_label=audience_label,
         ),
         "classroomReminder": build_classroom_reminder_output(
             course=analysis.course,
             course_work=analysis.course_work,
             reminder_title=reminder_title,
             reminder_body=reminder_body,
-            target_student_ids=target_student_ids or [],
+            target_student_ids=resolved_target_student_ids,
             scheduled_time=scheduled_time,
         ),
     }
@@ -66,8 +74,9 @@ def build_classroom_reminder_output(
     target_student_ids: list[str],
     scheduled_time: str | None,
 ) -> dict[str, Any]:
+    resolved_target_student_ids = _normalize_target_student_ids(target_student_ids)
     assignee_mode = "ALL_STUDENTS"
-    if target_student_ids:
+    if resolved_target_student_ids:
         assignee_mode = "INDIVIDUAL_STUDENTS"
 
     return {
@@ -81,7 +90,7 @@ def build_classroom_reminder_output(
         "materials": [],
         "scheduledTime": scheduled_time,
         "assigneeMode": assignee_mode,
-        "targetStudentIds": target_student_ids,
+        "targetStudentIds": resolved_target_student_ids,
         "requiresTeacherApproval": True,
     }
 
@@ -232,6 +241,7 @@ def _build_reminder_markdown_output(
     reminder_title: str,
     reminder_body: str,
     tone: str,
+    audience_label: str,
 ) -> dict[str, Any]:
     course = analysis.course
     target_count = len(analysis.unsubmitted)
@@ -243,6 +253,7 @@ def _build_reminder_markdown_output(
             f"- コース: {_course_label(course)}",
             f"- 課題: {analysis.course_work.title}",
             f"- 未提出者数: {target_count}名",
+            f"- 投稿対象: {audience_label}",
             f"- 口調: {tone}",
             "",
             "## 投稿案",
@@ -267,6 +278,7 @@ def _build_reminder_pdf_output(
     reminder_title: str,
     reminder_body: str,
     tone: str,
+    audience_label: str,
 ) -> dict[str, Any]:
     course = analysis.course
     return {
@@ -278,7 +290,8 @@ def _build_reminder_pdf_output(
                 "heading": "対象",
                 "body": (
                     f"{_course_label(course)} / 課題「{analysis.course_work.title}」"
-                    f" / 未提出者 {len(analysis.unsubmitted)}名 / 口調 {tone}"
+                    f" / 未提出者 {len(analysis.unsubmitted)}名"
+                    f" / 投稿対象 {audience_label} / 口調 {tone}"
                 ),
             },
             {
@@ -299,6 +312,7 @@ def _build_reminder_google_document_output(
     reminder_title: str,
     reminder_body: str,
     tone: str,
+    audience_label: str,
 ) -> dict[str, Any]:
     course = analysis.course
     return {
@@ -314,7 +328,10 @@ def _build_reminder_google_document_output(
             },
             {
                 "type": "paragraph",
-                "text": f"未提出者数: {len(analysis.unsubmitted)}名 / 口調: {tone}",
+                "text": (
+                    f"未提出者数: {len(analysis.unsubmitted)}名"
+                    f" / 投稿対象: {audience_label} / 口調: {tone}"
+                ),
             },
             {"type": "heading2", "text": "投稿案"},
             {"type": "paragraph", "text": reminder_body},
@@ -352,7 +369,7 @@ def _markdown_table(
                     row.status_label,
                     _format_date(row.due_at),
                     _format_timestamp(row.submitted_at),
-                    " / ".join(row.notes),
+                    _notes_text(row.notes),
                 ]
             )
             + " |"
@@ -361,19 +378,9 @@ def _markdown_table(
 
 
 def _pdf_table(rows: Iterable[SubmissionEvaluation]) -> dict[str, Any]:
-    rows = list(rows)
     return {
         "columns": ["生徒名", "状態", "締切", "提出日時", "備考"],
-        "rows": [
-            [
-                row.student_name or row.student_id,
-                row.status_label,
-                _format_date(row.due_at),
-                _format_timestamp(row.submitted_at),
-                " / ".join(row.notes),
-            ]
-            for row in rows
-        ],
+        "rows": _table_rows(rows),
     }
 
 
@@ -384,6 +391,59 @@ def _google_table_block(rows: Iterable[SubmissionEvaluation]) -> dict[str, Any]:
         "columns": table["columns"],
         "rows": table["rows"],
     }
+
+
+def _table_rows(rows: Iterable[SubmissionEvaluation]) -> list[list[str]]:
+    rendered_rows = [_table_row(row) for row in rows]
+    if rendered_rows:
+        return rendered_rows
+    return [["該当者はいません。", "-", "-", "-", "-"]]
+
+
+def _table_row(row: SubmissionEvaluation) -> list[str]:
+    return [
+        row.student_name or row.student_id,
+        row.status_label,
+        _format_date(row.due_at),
+        _format_timestamp(row.submitted_at),
+        _notes_text(row.notes),
+    ]
+
+
+def _notes_text(notes: Iterable[str]) -> str:
+    rendered = " / ".join(note.strip() for note in notes if note.strip())
+    return rendered or "-"
+
+
+def _resolve_target_student_ids(
+    analysis: SubmissionAnalysis,
+    target_student_ids: list[str] | None,
+) -> list[str]:
+    if target_student_ids is None:
+        return _normalize_target_student_ids(
+            entry.student_id for entry in analysis.unsubmitted
+        )
+    return _normalize_target_student_ids(target_student_ids)
+
+
+def _normalize_target_student_ids(
+    target_student_ids: Iterable[str],
+) -> list[str]:
+    seen: set[str] = set()
+    normalized_ids: list[str] = []
+    for student_id in target_student_ids:
+        normalized = str(student_id).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_ids.append(normalized)
+    return normalized_ids
+
+
+def _reminder_audience_label(target_student_ids: list[str]) -> str:
+    if target_student_ids:
+        return f"指定生徒 {len(target_student_ids)}名"
+    return "コース全員"
 
 
 def _format_date(value: datetime | None) -> str:

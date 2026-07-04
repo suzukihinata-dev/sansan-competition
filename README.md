@@ -37,7 +37,7 @@ GitHub Actions based PR automation lives in `.github/workflows/pr-automation.yml
 
 - Trigger: `pull_request_target`
 - Loop: auto-fix cache artifacts, rerun validation, post a PR report comment
-- Pass condition: `pytest`, CLI sample generation, and shared JSON contract checks all pass
+- Pass condition: `repo-hygiene`, `pytest`, CLI checks, shared JSON contract checks, and the focused `kimu-regression-gate` all pass
 - Merge behavior: by default the workflow stops at a review result; add the `automerge` label to allow squash merge after a green run
 - Fork PRs: validation and report comments run, but auto-fix commits are only pushed for same-repository branches
 
@@ -118,6 +118,26 @@ uv run python main.py sample-partial-reminder
 ```bash
 uv run python -m unittest discover -s tests
 ```
+
+## Kimu Regression Gate
+
+`kimu` 担当の contract-critical な経路だけを、1 コマンドで確認する入口です。
+対象は `normalization -> analysis -> contract -> representative outputs` です。
+
+ローカルで実行するタイミング:
+
+- `sansan_competition/normalization.py`、`analysis.py`、`contract.py`、`outputs.py` を変更した直後
+- `scripts/kimu_regression_gate.py` や、その周辺テストを変更した直後
+- 上記を含む PR を push / 更新する前
+
+```bash
+uv run python scripts/kimu_regression_gate.py
+```
+
+PR での扱い:
+
+- `scripts/pr_automation.py` から `kimu-regression-gate` として実行されます
+- これは既存の `pytest` や汎用 contract チェックを置き換えず、kimu の重要経路だけを狭く補完します
 
 ## Google Classroom / OAuth
 
