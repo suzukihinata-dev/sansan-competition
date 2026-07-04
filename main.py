@@ -266,6 +266,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "demo",
             "sample-reminder",
             "sample-course-summary",
+            "sample-ai-input-course-summary",
             "sample-ai-input-reminder",
             "sample-ai-input-weekly-report",
             "sample-partial-analysis",
@@ -1067,6 +1068,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "sample-course-summary":
         payload = build_gui_sample_payload(AgentTaskType.COURSE_SUMMARY)
         print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    if args.command == "sample-ai-input-course-summary":
+        payload = build_ai_task_input(
+            AgentTaskType.COURSE_SUMMARY,
+            analysis,
+            tone="formal",
+            teacher_instruction="未提出と遅延の傾向を簡潔に整理してください。",
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "sample-ai-input-reminder":

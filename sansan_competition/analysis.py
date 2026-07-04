@@ -9,10 +9,12 @@ from .models import (
     Course,
     CourseWork,
     JST,
+    SubmissionState,
     StudentSubmission,
     SubmissionAnalysis,
     SubmissionEvaluation,
     SUBMITTED_STATES,
+    UNSUBMITTED_STATES,
 )
 
 DEFAULT_DUE_SOON_WINDOW = timedelta(days=2)
@@ -106,26 +108,36 @@ def build_ai_task_input(
 ) -> dict[str, Any]:
     resolved_task = AgentTaskType(task_type)
     selected_evaluations = _select_evaluations_for_task(resolved_task, analysis)
-    student_entries: list[dict[str, Any]] = []
-
-    for index, evaluation in enumerate(selected_evaluations, start=1):
-        entry = {
-            "studentRef": f"student_{index:03d}",
-            "status": evaluation.status_label,
-            "submissionState": evaluation.submission_state,
-            "isMissing": evaluation.is_missing,
-            "isDueSoon": evaluation.is_due_soon,
-            "isLate": evaluation.is_late,
-            "attachmentMissingPossible": evaluation.attachment_missing_possible,
-            "notes": evaluation.notes,
-        }
-        if include_student_names:
-            entry["studentId"] = evaluation.student_id
-            entry["studentName"] = evaluation.student_name
-        student_entries.append(entry)
+    student_entries = [
+        _build_task_student_entry(
+            task_type=resolved_task,
+            evaluation=evaluation,
+            index=index,
+            include_student_names=include_student_names,
+        )
+        for index, evaluation in enumerate(selected_evaluations, start=1)
+    ]
 
     normalized_teacher_instruction = teacher_instruction.strip()
     target_summary = _summarize_evaluations(selected_evaluations)
+    requested_detail_mode = (
+        "identified_targets"
+        if include_student_names
+        else "minimal_targets_only"
+    )
+    contains_student_identifiers = any(
+        "studentId" in entry or "studentName" in entry
+        for entry in student_entries
+    )
+    if contains_student_identifiers:
+        applied_detail_mode = "identified_targets"
+        student_identifier_mode = "real_student_id_and_name"
+    elif student_entries:
+        applied_detail_mode = "pseudonymized_targets_only"
+        student_identifier_mode = "pseudonymized_student_ref_only"
+    else:
+        applied_detail_mode = "aggregate_only"
+        student_identifier_mode = "no_student_identifiers"
 
     return {
         "taskType": resolved_task.value,
@@ -159,13 +171,16 @@ def build_ai_task_input(
             "prohibitedItems": COMMON_PROHIBITED_ITEMS + list(prohibited_items or []),
         },
         "privacy": {
-            "containsStudentNames": include_student_names,
-            "studentIdentifierMode": (
-                "real_student_id_and_name"
-                if include_student_names
-                else "pseudonymized_student_ref_only"
+            "requestedDetailMode": requested_detail_mode,
+            "appliedDetailMode": applied_detail_mode,
+            "containsStudentNames": any(
+                "studentName" in entry for entry in student_entries
             ),
-            "recommendedForExternalAI": not include_student_names,
+            "containsStudentIds": any(
+                "studentId" in entry for entry in student_entries
+            ),
+            "studentIdentifierMode": student_identifier_mode,
+            "recommendedForExternalAI": not contains_student_identifiers,
         },
     }
 
@@ -180,7 +195,12 @@ def _evaluate_submission(
     due_at = course_work.due_at
     submitted_at = submission.submitted_at
     is_submitted = submission.state in SUBMITTED_STATES
-    is_missing = not is_submitted
+    is_returned = submission.state == SubmissionState.RETURNED.value
+    is_exempt_like = (
+        submission.state in UNSUBMITTED_STATES
+        and _has_grading_signal(submission)
+    )
+    is_missing = not is_submitted and not is_exempt_like
 
     deadline_passed = False
     is_due_soon = False
@@ -188,9 +208,11 @@ def _evaluate_submission(
         deadline_passed = now > due_at
         is_due_soon = is_missing and not deadline_passed and (due_at - now) <= due_soon_window
 
-    is_late = submission.late
-    if not is_late and is_submitted and due_at and submitted_at:
-        is_late = submitted_at > due_at
+    is_late = False
+    if is_submitted:
+        is_late = submission.late
+        if not is_late and due_at and submitted_at:
+            is_late = submitted_at > due_at
 
     attachment_missing_possible = (
         is_submitted
@@ -199,7 +221,12 @@ def _evaluate_submission(
     )
 
     notes: list[str] = []
-    if is_missing and deadline_passed:
+    if is_exempt_like:
+        status_label = "提出免除の可能性"
+        notes.append(
+            "未提出状態ですが採点情報があるため、提出免除または教師処理済みの可能性があります。"
+        )
+    elif is_missing and deadline_passed:
         status_label = "期限超過未提出"
         notes.append("締切を過ぎても未提出です。")
     elif is_missing and is_due_soon:
@@ -207,12 +234,19 @@ def _evaluate_submission(
         notes.append("締切が近いため優先確認が必要です。")
     elif is_missing:
         status_label = "未提出"
+    elif is_returned and is_late:
+        status_label = "返却済み（遅延提出）"
+        notes.append("締切後に提出されています。")
     elif is_late:
         status_label = "遅延提出"
         notes.append("締切後に提出されています。")
+    elif is_returned:
+        status_label = "返却済み"
     else:
         status_label = "提出済み"
 
+    if is_returned:
+        notes.append("教師によって返却済みです。")
     if attachment_missing_possible:
         notes.append("提出済みですが添付不足の可能性があります。")
 
@@ -223,9 +257,12 @@ def _evaluate_submission(
         status_label=status_label,
         due_at=due_at,
         submitted_at=submitted_at,
+        is_submitted=is_submitted,
         is_missing=is_missing,
         is_due_soon=is_due_soon,
         is_late=is_late,
+        is_returned=is_returned,
+        is_exempt_like=is_exempt_like,
         attachment_missing_possible=attachment_missing_possible,
         attachment_count=len(submission.attachments),
         notes=notes,
@@ -271,8 +308,87 @@ def _select_evaluations_for_task(
             ]
         )
     if task_type is AgentTaskType.RUBRIC_SUPPORT:
-        return list(analysis.submitted)
+        return list(analysis.actual_submitted)
     return list(analysis.evaluations)
+
+
+def _build_task_student_entry(
+    *,
+    task_type: AgentTaskType,
+    evaluation: SubmissionEvaluation,
+    index: int,
+    include_student_names: bool,
+) -> dict[str, Any]:
+    entry = _build_student_identity_entry(
+        evaluation=evaluation,
+        index=index,
+        include_student_names=include_student_names,
+    )
+    if task_type in {
+        AgentTaskType.REMINDER_GENERATION,
+        AgentTaskType.ANNOUNCEMENT_DRAFT,
+    }:
+        entry.update(
+            {
+                "status": evaluation.status_label,
+                "isMissing": evaluation.is_missing,
+                "isDueSoon": evaluation.is_due_soon,
+                "notes": evaluation.notes,
+            }
+        )
+        return entry
+    if task_type is AgentTaskType.WEEKLY_REPORT:
+        entry.update(
+            {
+                "status": evaluation.status_label,
+                "isMissing": evaluation.is_missing,
+                "isDueSoon": evaluation.is_due_soon,
+                "isLate": evaluation.is_late,
+                "attachmentMissingPossible": evaluation.attachment_missing_possible,
+                "notes": evaluation.notes,
+            }
+        )
+        return entry
+    if task_type is AgentTaskType.RUBRIC_SUPPORT:
+        entry.update(
+            {
+                "status": evaluation.status_label,
+                "submissionState": evaluation.submission_state,
+                "isLate": evaluation.is_late,
+                "attachmentMissingPossible": evaluation.attachment_missing_possible,
+                "attachmentCount": evaluation.attachment_count,
+                "notes": evaluation.notes,
+            }
+        )
+        return entry
+    entry.update(
+        {
+            "status": evaluation.status_label,
+            "submissionState": evaluation.submission_state,
+            "isMissing": evaluation.is_missing,
+            "isDueSoon": evaluation.is_due_soon,
+            "isLate": evaluation.is_late,
+            "attachmentMissingPossible": evaluation.attachment_missing_possible,
+            "attachmentCount": evaluation.attachment_count,
+            "notes": evaluation.notes,
+        }
+    )
+    return entry
+
+
+def _build_student_identity_entry(
+    *,
+    evaluation: SubmissionEvaluation,
+    index: int,
+    include_student_names: bool,
+) -> dict[str, Any]:
+    entry = {
+        "studentRef": f"student_{index:03d}",
+    }
+    if include_student_names:
+        entry["studentId"] = evaluation.student_id
+        entry["studentName"] = evaluation.student_name
+    return entry
 
 
 def _selection_mode_label(task_type: AgentTaskType) -> str:
@@ -299,6 +415,10 @@ def _build_input_warnings(analysis: SubmissionAnalysis) -> list[str]:
     warnings: list[str] = []
     if analysis.normalization_issues:
         warnings.append("一部データの正規化に失敗しているため、集計は完全でない可能性があります。")
+    if analysis.exempt_like:
+        warnings.append(
+            "採点済みの未提出状態が含まれるため、提出免除または個別対応済みの可能性があります。"
+        )
     if analysis.attachment_flags:
         warnings.append("添付不足の可能性は推定であり、実際の提出内容確認が必要です。")
     return warnings
@@ -329,3 +449,10 @@ def _deduplicate_evaluations(
         seen_student_ids.add(entry.student_id)
         unique_entries.append(entry)
     return unique_entries
+
+
+def _has_grading_signal(submission: StudentSubmission) -> bool:
+    return (
+        submission.assigned_grade is not None
+        or submission.draft_grade is not None
+    )

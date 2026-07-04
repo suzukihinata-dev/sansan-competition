@@ -5,12 +5,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from sansan_competition.contracts import SCHEMA_VERSION
 from sansan_competition.pr_automation import (
     CheckResult,
     build_report,
     collect_cache_artifacts,
     remove_cache_artifacts,
     run_cli_contract_checks,
+    run_kimu_regression_gate_check,
     validate_common_contract,
 )
 
@@ -32,11 +34,53 @@ class PrAutomationTests(unittest.TestCase):
                 },
             }
         )
-        self.assertIn("course must be an object", issues)
-        self.assertIn("gui must be an object", issues)
-        self.assertIn("outputs must be an object", issues)
-        self.assertIn("approval must be an object", issues)
-        self.assertIn("errors must be an array", issues)
+        self.assertIn(
+            "missing required top-level keys: approval, course, errors, gui, outputs",
+            issues,
+        )
+        self.assertIn(
+            "missing common top-level keys: approval, course, errors, gui, outputs",
+            issues,
+        )
+
+    def test_validate_common_contract_accepts_partial_success_and_nullable_course(
+        self,
+    ) -> None:
+        issues = validate_common_contract(
+            {
+                "schemaVersion": SCHEMA_VERSION,
+                "requestId": "req",
+                "generatedAt": "2026-07-03T13:00:00+09:00",
+                "agentTaskType": "REMINDER_GENERATION",
+                "status": "partial_success",
+                "course": None,
+                "summary": {
+                    "title": "t",
+                    "shortSummary": "s",
+                    "teacherActionRequired": True,
+                    "recommendedAction": "r",
+                },
+                "gui": {
+                    "cards": [],
+                    "tables": [],
+                    "warnings": [],
+                    "editableFields": [],
+                },
+                "outputs": {
+                    "markdown": None,
+                    "pdf": None,
+                    "googleDocument": None,
+                    "classroomReminder": None,
+                },
+                "approval": {
+                    "required": False,
+                    "reason": "n/a",
+                    "actions": [],
+                },
+                "errors": [],
+            }
+        )
+        self.assertEqual(issues, [])
 
     def test_collect_and_remove_cache_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -69,6 +113,23 @@ class PrAutomationTests(unittest.TestCase):
 
             self.assertTrue(result.passed)
             self.assertTrue(any("help output valid" in detail for detail in result.details))
+
+    def test_kimu_regression_gate_uses_tool_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            tool_root = temp_root / ".workflow-tools"
+            scripts_dir = tool_root / "scripts"
+            scripts_dir.mkdir(parents=True)
+            (scripts_dir / "kimu_regression_gate.py").write_text(
+                "print('kimu regression gate: PASS')\n",
+                encoding="utf-8",
+            )
+
+            result = run_kimu_regression_gate_check(tool_root)
+
+            self.assertTrue(result.passed)
+            self.assertTrue(any("kimu regression gate: PASS" in detail for detail in result.details))
+
     def test_build_report_apply_fixes_cleans_post_check_cache(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -91,6 +152,14 @@ class PrAutomationTests(unittest.TestCase):
                     "sansan_competition.pr_automation.run_cli_contract_checks",
                     return_value=CheckResult(
                         name="cli-contract",
+                        passed=True,
+                        details=["ok"],
+                    ),
+                ),
+                patch(
+                    "sansan_competition.pr_automation.run_kimu_regression_gate_check",
+                    return_value=CheckResult(
+                        name="kimu-regression-gate",
                         passed=True,
                         details=["ok"],
                     ),

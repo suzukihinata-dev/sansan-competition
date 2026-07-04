@@ -7,6 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from .analysis import analyze_submissions
+from .contracts import (
+    ALLOWED_AGENT_TASK_TYPES,
+    ALLOWED_STATUSES,
+    COMMON_TOP_LEVEL_KEYS,
+    SCHEMA_VERSION,
+)
 from .models import (
     AgentTaskType,
     Course,
@@ -18,7 +24,6 @@ from .models import (
 )
 from .outputs import build_reminder_outputs, build_submission_report_outputs
 
-SCHEMA_VERSION = "1.0.0"
 STANDARD_ERROR_CODES = {
     "CLASSROOM_API_PERMISSION_DENIED",
     "CLASSROOM_API_NOT_FOUND",
@@ -54,7 +59,11 @@ class AgentOutputEnvelope:
 
 
 def schema_file_path() -> Path:
-    return Path(__file__).resolve().parent.parent / "schemas" / "agent-output-v1.0.0.json"
+    return (
+        Path(__file__).resolve().parent.parent
+        / "schemas"
+        / f"agent-output-v{SCHEMA_VERSION}.json"
+    )
 
 
 def load_contract_schema() -> dict[str, Any]:
@@ -146,7 +155,6 @@ def build_reminder_generation_response(
         else ResponseStatus.SUCCESS
     )
     targets = analysis.unsubmitted
-    target_ids = target_student_ids or []
     response = {
         "schemaVersion": SCHEMA_VERSION,
         "requestId": request_id,
@@ -189,7 +197,7 @@ def build_reminder_generation_response(
             reminder_title=reminder_title,
             reminder_body=reminder_body,
             tone=tone,
-            target_student_ids=target_ids,
+            target_student_ids=target_student_ids,
             scheduled_time=scheduled_time,
         ),
         "approval": {
@@ -290,6 +298,10 @@ def validate_agent_output(payload: dict[str, Any]) -> list[str]:
     if not isinstance(payload, dict):
         return ["Payload must be an object."]
 
+    missing_top_level = COMMON_TOP_LEVEL_KEYS - payload.keys()
+    for key in sorted(missing_top_level):
+        errors.append(f"{key} is required.")
+
     _require_string(payload, "schemaVersion", errors)
     if payload.get("schemaVersion") != SCHEMA_VERSION:
         errors.append(f"schemaVersion must be {SCHEMA_VERSION}.")
@@ -299,32 +311,50 @@ def validate_agent_output(payload: dict[str, Any]) -> list[str]:
     _require_iso_datetime(payload.get("generatedAt"), "generatedAt", errors)
 
     _require_string(payload, "agentTaskType", errors)
-    if payload.get("agentTaskType") not in {member.value for member in AgentTaskType}:
+    if payload.get("agentTaskType") not in ALLOWED_AGENT_TASK_TYPES:
         errors.append("agentTaskType is not a supported value.")
 
     _require_string(payload, "status", errors)
-    if payload.get("status") not in {member.value for member in ResponseStatus}:
+    if payload.get("status") not in ALLOWED_STATUSES:
         errors.append("status is not a supported value.")
 
-    course = payload.get("course")
-    if course is not None:
-        _validate_course(course, errors)
+    if "course" in payload:
+        course = payload.get("course")
+        if course is not None:
+            _validate_course(course, errors)
 
-    _validate_summary(payload.get("summary"), errors)
-    _validate_gui(payload.get("gui"), errors)
-    _validate_outputs(payload.get("outputs"), errors)
-    _validate_approval(payload.get("approval"), errors)
-    _validate_errors(payload.get("errors"), errors)
+    if "summary" in payload:
+        _validate_summary(payload.get("summary"), errors)
+    if "gui" in payload:
+        _validate_gui(payload.get("gui"), errors)
+    if "outputs" in payload:
+        _validate_outputs(payload.get("outputs"), errors)
+    if "approval" in payload:
+        _validate_approval(payload.get("approval"), errors)
+    if "errors" in payload:
+        _validate_errors(payload.get("errors"), errors)
 
     status = payload.get("status")
     if status == ResponseStatus.ERROR.value and not payload.get("errors"):
         errors.append("errors must contain at least one item when status=error.")
 
-    outputs = payload.get("outputs") or {}
-    approval = payload.get("approval") or {}
+    outputs = payload.get("outputs")
+    if not isinstance(outputs, dict):
+        outputs = {}
+    approval = payload.get("approval")
+    if not isinstance(approval, dict):
+        approval = {}
     if outputs.get("classroomReminder") is not None and not approval.get("required", False):
         errors.append(
             "approval.required must be true when outputs.classroomReminder is present."
+        )
+    if outputs.get("classroomReminder") is not None and not _has_approval_action(
+        approval,
+        "CREATE_CLASSROOM_ANNOUNCEMENT",
+        "outputs.classroomReminder",
+    ):
+        errors.append(
+            "approval.actions must include CREATE_CLASSROOM_ANNOUNCEMENT for outputs.classroomReminder."
         )
 
     return errors
@@ -762,6 +792,23 @@ def _validate_approval(approval: Any, errors: list[str]) -> None:
         errors.append("approval.required must be a boolean.")
     _require_string(approval, "reason", errors, prefix="approval")
     _require_list(approval, "actions", errors, prefix="approval")
+    actions = approval.get("actions")
+    if isinstance(actions, list):
+        for index, item in enumerate(actions):
+            if not isinstance(item, dict):
+                errors.append(f"approval.actions[{index}] must be an object.")
+                continue
+            for key in ("actionId", "type", "label", "payloadRef"):
+                _require_string(
+                    item,
+                    key,
+                    errors,
+                    prefix=f"approval.actions[{index}]",
+                )
+            if not isinstance(item.get("requiresConfirmation"), bool):
+                errors.append(
+                    f"approval.actions[{index}].requiresConfirmation must be a boolean."
+                )
 
 
 def _validate_errors(items: Any, errors: list[str]) -> None:
@@ -808,6 +855,14 @@ def _validate_google_document_output(item: Any, errors: list[str]) -> None:
     for key in ("title", "documentType"):
         _require_string(item, key, errors, prefix="outputs.googleDocument")
     _require_list(item, "blocks", errors, prefix="outputs.googleDocument")
+    blocks = item.get("blocks")
+    if not isinstance(blocks, list):
+        return
+    if not blocks:
+        errors.append("outputs.googleDocument.blocks must not be empty.")
+        return
+    for index, block in enumerate(blocks):
+        _validate_google_document_block(block, index, errors)
 
 
 def _validate_classroom_reminder_output(item: Any, errors: list[str]) -> None:
@@ -827,18 +882,130 @@ def _validate_classroom_reminder_output(item: Any, errors: list[str]) -> None:
         )
     for key in ("postType", "title", "text", "assigneeMode"):
         _require_string(item, key, errors, prefix="outputs.classroomReminder")
+    materials = item.get("materials")
     _require_list(item, "materials", errors, prefix="outputs.classroomReminder")
+    if isinstance(materials, list):
+        for index, material in enumerate(materials):
+            if not isinstance(material, dict):
+                errors.append(
+                    "outputs.classroomReminder.materials"
+                    f"[{index}] must be an object."
+                )
     if item.get("scheduledTime") is not None:
         _require_iso_datetime(
             item.get("scheduledTime"),
             "outputs.classroomReminder.scheduledTime",
             errors,
         )
+    target_student_ids = item.get("targetStudentIds")
     _require_list(item, "targetStudentIds", errors, prefix="outputs.classroomReminder")
+    normalized_target_ids: list[str] = []
+    if isinstance(target_student_ids, list):
+        seen_target_ids: set[str] = set()
+        for index, student_id in enumerate(target_student_ids):
+            if not isinstance(student_id, str) or not student_id.strip():
+                errors.append(
+                    "outputs.classroomReminder.targetStudentIds"
+                    f"[{index}] must be a non-empty string."
+                )
+                continue
+            normalized = student_id.strip()
+            if normalized in seen_target_ids:
+                errors.append(
+                    "outputs.classroomReminder.targetStudentIds"
+                    " must not contain duplicates."
+                )
+                continue
+            seen_target_ids.add(normalized)
+            normalized_target_ids.append(normalized)
+    post_type = item.get("postType")
+    if isinstance(post_type, str) and post_type != "announcement":
+        errors.append(
+            "outputs.classroomReminder.postType must be announcement in MVP."
+        )
+    assignee_mode = item.get("assigneeMode")
+    if isinstance(assignee_mode, str) and assignee_mode not in {
+        "ALL_STUDENTS",
+        "INDIVIDUAL_STUDENTS",
+    }:
+        errors.append(
+            "outputs.classroomReminder.assigneeMode must be ALL_STUDENTS or INDIVIDUAL_STUDENTS."
+        )
+    if assignee_mode == "INDIVIDUAL_STUDENTS" and not normalized_target_ids:
+        errors.append(
+            "outputs.classroomReminder.targetStudentIds is required when assigneeMode is INDIVIDUAL_STUDENTS."
+        )
+    if assignee_mode == "ALL_STUDENTS" and normalized_target_ids:
+        errors.append(
+            "outputs.classroomReminder.targetStudentIds must be empty when assigneeMode is ALL_STUDENTS."
+        )
     if not isinstance(item.get("requiresTeacherApproval"), bool):
         errors.append(
             "outputs.classroomReminder.requiresTeacherApproval must be a boolean."
         )
+    elif item.get("requiresTeacherApproval") is not True:
+        errors.append(
+            "outputs.classroomReminder.requiresTeacherApproval must be true."
+        )
+
+
+def _validate_google_document_block(
+    block: Any,
+    index: int,
+    errors: list[str],
+) -> None:
+    prefix = f"outputs.googleDocument.blocks[{index}]"
+    if not isinstance(block, dict):
+        errors.append(f"{prefix} must be an object.")
+        return
+
+    block_type = block.get("type")
+    if not isinstance(block_type, str) or not block_type.strip():
+        errors.append(f"{prefix}.type must be a non-empty string.")
+        return
+
+    if block_type in {"heading1", "heading2", "heading3", "paragraph"}:
+        _require_string(block, "text", errors, prefix=prefix)
+        return
+
+    if block_type == "bulletList":
+        items = block.get("items")
+        if not isinstance(items, list):
+            errors.append(f"{prefix}.items must be a list.")
+            return
+        if not any(isinstance(item, str) and item.strip() for item in items):
+            errors.append(f"{prefix}.items must contain at least one non-empty string.")
+        return
+
+    if block_type == "table":
+        columns = block.get("columns")
+        rows = block.get("rows")
+        if not isinstance(columns, list):
+            errors.append(f"{prefix}.columns must be a list.")
+        elif not columns:
+            errors.append(f"{prefix}.columns must not be empty.")
+        else:
+            for column_index, column in enumerate(columns):
+                if not isinstance(column, str) or not column.strip():
+                    errors.append(
+                        f"{prefix}.columns[{column_index}] must be a non-empty string."
+                    )
+        if not isinstance(rows, list):
+            errors.append(f"{prefix}.rows must be a list.")
+            return
+        if isinstance(columns, list) and columns:
+            expected_width = len(columns)
+            for row_index, row in enumerate(rows):
+                if not isinstance(row, list):
+                    errors.append(f"{prefix}.rows[{row_index}] must be a list.")
+                    continue
+                if len(row) != expected_width:
+                    errors.append(
+                        f"{prefix}.rows[{row_index}] must have {expected_width} cells."
+                    )
+        return
+
+    errors.append(f"{prefix}.type is not supported: {block_type}")
 
 
 def _require_string(
@@ -888,3 +1055,21 @@ def _require_iso_datetime(value: Any, label: str, errors: list[str]) -> None:
         datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         errors.append(f"{label} must be a valid ISO 8601 string.")
+
+
+def _has_approval_action(
+    approval: Any,
+    action_type: str,
+    payload_ref: str,
+) -> bool:
+    if not isinstance(approval, dict):
+        return False
+    actions = approval.get("actions")
+    if not isinstance(actions, list):
+        return False
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        if action.get("type") == action_type and action.get("payloadRef") == payload_ref:
+            return True
+    return False

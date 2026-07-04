@@ -46,7 +46,7 @@ def normalize_coursework(raw: Mapping[str, Any]) -> CourseWork:
     course_id = _required_str(raw, "courseId")
     title = _required_str(raw, "title")
     description = _optional_str(raw, "description")
-    work_type = _optional_str(raw, "workType", default="ASSIGNMENT")
+    work_type = _fallback_str(raw, "workType", "courseWorkType", default="ASSIGNMENT")
     max_points = _optional_number(raw, "maxPoints")
     due_at, due_date, due_time = _parse_due_fields(
         raw.get("dueDate"),
@@ -83,7 +83,7 @@ def normalize_submission(
     course_id = _required_str(raw, "courseId")
     course_work_id = _required_str(raw, "courseWorkId")
     student_id = _required_str(raw, "studentId", "userId")
-    resolved_student_name = student_name or _optional_str(raw, "studentName", default="")
+    resolved_student_name = _resolved_student_name(student_name, raw)
     state = _required_str(raw, "state")
 
     submitted_at = _parse_rfc3339(_submitted_at_value(raw))
@@ -120,8 +120,11 @@ def normalize_submission_batch(
     name_lookup = student_names_by_id or {}
 
     for index, raw in enumerate(raw_submissions):
-        student_id = str(raw.get("studentId") or raw.get("userId") or "")
         try:
+            if not isinstance(raw, Mapping):
+                raise ValueError("Submission record must be a mapping.")
+
+            student_id = str(raw.get("studentId") or raw.get("userId") or "")
             submissions.append(
                 normalize_submission(
                     raw,
@@ -138,6 +141,17 @@ def normalize_submission_batch(
             )
 
     return submissions, issues
+
+
+def _resolved_student_name(
+    student_name: str | None,
+    raw: Mapping[str, Any],
+) -> str:
+    if student_name is not None:
+        if not isinstance(student_name, str):
+            raise ValueError("Field studentName must be a string.")
+        return student_name.strip()
+    return _optional_str(raw, "studentName", default="")
 
 
 def _required_str(raw: Mapping[str, Any], *keys: str) -> str:
@@ -161,6 +175,21 @@ def _optional_str(
         if not isinstance(value, str):
             raise ValueError(f"Field {key} must be a string.")
         return value.strip()
+    return default
+
+
+def _fallback_str(
+    raw: Mapping[str, Any],
+    *keys: str,
+    default: str = "",
+) -> str:
+    for key in keys:
+        value = raw.get(key)
+        if value is None or not isinstance(value, str):
+            continue
+        normalized = value.strip()
+        if normalized:
+            return normalized
     return default
 
 
@@ -246,8 +275,16 @@ def _parse_due_fields(
     if due_date_value is None:
         return None, None, None
 
-    parsed_date = _parse_date(due_date_value)
-    parsed_time = _parse_time(due_time_value)
+    try:
+        parsed_date = _parse_date(due_date_value)
+    except (KeyError, TypeError, ValueError):
+        return None, None, None
+
+    try:
+        parsed_time = _parse_time(due_time_value)
+    except (KeyError, TypeError, ValueError):
+        parsed_time = time(23, 59)
+
     due_at = datetime.combine(parsed_date, parsed_time, tzinfo=JST)
     due_date = parsed_date.isoformat()
     due_time = parsed_time.strftime("%H:%M")
@@ -256,7 +293,7 @@ def _parse_due_fields(
 
 def _parse_date(value: Any) -> date:
     if isinstance(value, str):
-        return date.fromisoformat(value)
+        return date.fromisoformat(value.strip())
     if isinstance(value, Mapping):
         return date(
             int(value["year"]),

@@ -116,7 +116,7 @@
     "markdown": {
       "fileName": "数学I_reminder_draft.md",
       "title": "課題提出リマインド",
-      "content": "# 課題提出リマインド\n\n## 対象\n- コース: 数学I / 1年A組\n- 課題: 二次関数プリント\n- 未提出者数: 1名\n- 口調: polite\n\n## 投稿案\n課題「二次関数プリント」の提出期限が近づいています。まだ提出していない人は、7月5日までに提出してください。\n\n## 教師向け注意\n- Classroom投稿前に内容と対象コースを確認してください。\n- 生徒個人名は本文に含めない想定です。"
+      "content": "# 課題提出リマインド\n\n## 対象\n- コース: 数学I / 1年A組\n- 課題: 二次関数プリント\n- 未提出者数: 1名\n- 投稿対象: 指定生徒 1名\n- 口調: polite\n\n## 投稿案\n課題「二次関数プリント」の提出期限が近づいています。まだ提出していない人は、7月5日までに提出してください。\n\n## 教師向け注意\n- Classroom投稿前に内容と対象コースを確認してください。\n- 生徒個人名は本文に含めない想定です。"
     },
     "pdf": {
       "fileName": "数学I_reminder_draft.pdf",
@@ -125,7 +125,7 @@
       "sections": [
         {
           "heading": "対象",
-          "body": "数学I / 1年A組 / 課題「二次関数プリント」 / 未提出者 1名 / 口調 polite"
+          "body": "数学I / 1年A組 / 課題「二次関数プリント」 / 未提出者 1名 / 投稿対象 指定生徒 1名 / 口調 polite"
         },
         {
           "heading": "投稿案",
@@ -151,7 +151,7 @@
         },
         {
           "type": "paragraph",
-          "text": "未提出者数: 1名 / 口調: polite"
+          "text": "未提出者数: 1名 / 投稿対象: 指定生徒 1名 / 口調: polite"
         },
         {
           "type": "heading2",
@@ -184,8 +184,10 @@
       "text": "課題「二次関数プリント」の提出期限が近づいています。まだ提出していない人は、7月5日までに提出してください。",
       "materials": [],
       "scheduledTime": null,
-      "assigneeMode": "ALL_STUDENTS",
-      "targetStudentIds": [],
+      "assigneeMode": "INDIVIDUAL_STUDENTS",
+      "targetStudentIds": [
+        "student_001"
+      ],
       "requiresTeacherApproval": true
     }
   },
