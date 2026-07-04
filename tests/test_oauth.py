@@ -12,7 +12,10 @@ from sansan_competition.oauth import (
     CLASSROOM_COURSEWORK_STUDENTS_READONLY_SCOPE,
     CLASSROOM_STUDENT_SUBMISSIONS_STUDENTS_READONLY_SCOPE,
     GoogleOAuthConfig,
+    GoogleOAuthAuthorizationRequiredError,
+    complete_google_oauth_authorization,
     load_google_user_credentials,
+    start_google_oauth_authorization,
 )
 
 
@@ -48,12 +51,22 @@ class FakeCreds:
 
 class FakeFlow:
     def __init__(self, returned_creds: FakeCreds) -> None:
-        self._returned_creds = returned_creds
+        self.credentials = returned_creds
+        self.redirect_uri: str | None = None
         self.run_local_server_calls: list[int] = []
+        self.authorization_url_calls: list[dict[str, object]] = []
+        self.fetch_token_calls: list[str] = []
 
     def run_local_server(self, *, port: int) -> FakeCreds:
         self.run_local_server_calls.append(port)
-        return self._returned_creds
+        return self.credentials
+
+    def authorization_url(self, **kwargs: object) -> tuple[str, str]:
+        self.authorization_url_calls.append(kwargs)
+        return ("https://accounts.example.test/auth", "state-123")
+
+    def fetch_token(self, *, authorization_response: str) -> None:
+        self.fetch_token_calls.append(authorization_response)
 
 
 class OAuthTests(unittest.TestCase):
@@ -79,7 +92,7 @@ class OAuthTests(unittest.TestCase):
             from_authorized_user_file=lambda path, scopes: cached_creds
         )
         fake_flow_class = types.SimpleNamespace(
-            from_client_secrets_file=lambda path, scopes: fake_flow
+            from_client_secrets_file=lambda path, scopes, state=None: fake_flow
         )
         fake_request_class = type("FakeRequest", (), {})
 
@@ -207,6 +220,121 @@ class OAuthTests(unittest.TestCase):
 
         self.assertIs(creds, cached_creds)
         self.assertEqual(fake_flow.run_local_server_calls, [])
+
+    def test_noninteractive_mode_raises_authorization_required(self) -> None:
+        cached_creds = FakeCreds(
+            valid=False,
+            scopes=(),
+            has_scopes_result=False,
+        )
+        refreshed_creds = FakeCreds(
+            valid=True,
+            scopes=("scope.a",),
+            has_scopes_result=True,
+        )
+        modules_patch, _ = self._patch_google_modules(
+            cached_creds=cached_creds,
+            refreshed_creds=refreshed_creds,
+        )
+
+        with modules_patch:
+            with self.assertRaises(GoogleOAuthAuthorizationRequiredError):
+                load_google_user_credentials(
+                    ("scope.b",),
+                    config=GoogleOAuthConfig(
+                        credentials_path=self.credentials_path,
+                        token_path=self.token_path,
+                    ),
+                    allow_interactive=False,
+                )
+
+    def test_start_google_oauth_authorization_returns_url_and_state(self) -> None:
+        cached_creds = FakeCreds(
+            valid=True,
+            scopes=("scope.a",),
+            has_scopes_result=True,
+        )
+        refreshed_creds = FakeCreds(
+            valid=True,
+            scopes=("scope.a",),
+            has_scopes_result=True,
+        )
+        modules_patch, fake_flow = self._patch_google_modules(
+            cached_creds=cached_creds,
+            refreshed_creds=refreshed_creds,
+        )
+
+        with modules_patch:
+            request = start_google_oauth_authorization(
+                ("scope.a",),
+                redirect_uri="http://127.0.0.1:8000/oauth/google/callback",
+                config=GoogleOAuthConfig(
+                    credentials_path=self.credentials_path,
+                    token_path=self.token_path,
+                ),
+            )
+
+        self.assertEqual(request.authorization_url, "https://accounts.example.test/auth")
+        self.assertEqual(request.state, "state-123")
+        self.assertEqual(
+            fake_flow.redirect_uri,
+            "http://127.0.0.1:8000/oauth/google/callback",
+        )
+        self.assertEqual(
+            fake_flow.authorization_url_calls,
+            [
+                {
+                    "access_type": "offline",
+                    "include_granted_scopes": "true",
+                    "prompt": "consent",
+                }
+            ],
+        )
+
+    def test_complete_google_oauth_authorization_writes_token(self) -> None:
+        cached_creds = FakeCreds(
+            valid=True,
+            scopes=("scope.a",),
+            has_scopes_result=True,
+        )
+        refreshed_creds = FakeCreds(
+            valid=True,
+            scopes=("scope.a", "scope.b"),
+            has_scopes_result=True,
+            token_json='{"token":"new","scopes":["scope.a","scope.b"]}',
+        )
+        modules_patch, fake_flow = self._patch_google_modules(
+            cached_creds=cached_creds,
+            refreshed_creds=refreshed_creds,
+        )
+
+        with modules_patch:
+            creds = complete_google_oauth_authorization(
+                ("scope.a", "scope.b"),
+                state="state-123",
+                authorization_response=(
+                    "http://127.0.0.1:8000/oauth/google/callback?state=state-123&code=abc"
+                ),
+                redirect_uri="http://127.0.0.1:8000/oauth/google/callback",
+                config=GoogleOAuthConfig(
+                    credentials_path=self.credentials_path,
+                    token_path=self.token_path,
+                ),
+            )
+
+        self.assertIs(creds, refreshed_creds)
+        self.assertEqual(
+            fake_flow.redirect_uri,
+            "http://127.0.0.1:8000/oauth/google/callback",
+        )
+        self.assertEqual(
+            fake_flow.fetch_token_calls,
+            ["http://127.0.0.1:8000/oauth/google/callback?state=state-123&code=abc"],
+        )
+        self.assertEqual(
+            json.loads(self.token_path.read_text(encoding="utf-8"))["token"],
+            "new",
+        )
 
 
 if __name__ == "__main__":

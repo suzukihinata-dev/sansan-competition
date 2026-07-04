@@ -30,6 +30,17 @@ class GoogleOAuthConfig:
         self.token_path = Path(self.token_path)
 
 
+class GoogleOAuthAuthorizationRequiredError(RuntimeError):
+    """Raised when an interactive OAuth grant is required but disabled."""
+
+
+@dataclass(slots=True)
+class GoogleOAuthAuthorizationRequest:
+    authorization_url: str
+    state: str
+    scopes: tuple[str, ...]
+
+
 def default_classroom_read_scopes(*, include_rosters: bool = True) -> tuple[str, ...]:
     scopes = [
         CLASSROOM_COURSES_READONLY_SCOPE,
@@ -48,22 +59,14 @@ def load_google_user_credentials(
     scopes: Iterable[str],
     *,
     config: GoogleOAuthConfig | None = None,
+    allow_interactive: bool = True,
 ) -> Any:
     resolved_config = config or GoogleOAuthConfig()
-    normalized_scopes = tuple(dict.fromkeys(str(scope).strip() for scope in scopes if str(scope).strip()))
+    normalized_scopes = _normalize_scopes(scopes)
     if not normalized_scopes:
         raise ValueError("At least one OAuth scope is required.")
 
-    try:
-        from google.auth.transport.requests import Request
-        from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
-    except ImportError as exc:
-        raise RuntimeError(
-            "Missing Google client libraries. Install them with "
-            "`uv sync --extra google` and run this project with "
-            "`uv run python ...`."
-        ) from exc
+    Request, Credentials, InstalledAppFlow = _import_google_clients()
 
     if not resolved_config.credentials_path.exists():
         raise FileNotFoundError(
@@ -85,6 +88,11 @@ def load_google_user_credentials(
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
+            if not allow_interactive:
+                raise GoogleOAuthAuthorizationRequiredError(
+                    "Google OAuth authorization is required. Start it from the GUI "
+                    "or run the CLI OAuth setup flow."
+                )
             flow = InstalledAppFlow.from_client_secrets_file(
                 str(resolved_config.credentials_path),
                 normalized_scopes,
@@ -96,6 +104,92 @@ def load_google_user_credentials(
         resolved_config.token_path.write_text(creds.to_json(), encoding="utf-8")
 
     return creds
+
+
+def start_google_oauth_authorization(
+    scopes: Iterable[str],
+    *,
+    redirect_uri: str,
+    config: GoogleOAuthConfig | None = None,
+) -> GoogleOAuthAuthorizationRequest:
+    resolved_config = config or GoogleOAuthConfig()
+    normalized_scopes = _normalize_scopes(scopes)
+    if not normalized_scopes:
+        raise ValueError("At least one OAuth scope is required.")
+
+    _, _, InstalledAppFlow = _import_google_clients()
+
+    if not resolved_config.credentials_path.exists():
+        raise FileNotFoundError(
+            f"OAuth client file not found: {resolved_config.credentials_path}"
+        )
+
+    flow = InstalledAppFlow.from_client_secrets_file(
+        str(resolved_config.credentials_path),
+        normalized_scopes,
+    )
+    flow.redirect_uri = redirect_uri
+    authorization_url, state = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent",
+    )
+    return GoogleOAuthAuthorizationRequest(
+        authorization_url=authorization_url,
+        state=state,
+        scopes=normalized_scopes,
+    )
+
+
+def complete_google_oauth_authorization(
+    scopes: Iterable[str],
+    *,
+    state: str,
+    authorization_response: str,
+    redirect_uri: str,
+    config: GoogleOAuthConfig | None = None,
+) -> Any:
+    resolved_config = config or GoogleOAuthConfig()
+    normalized_scopes = _normalize_scopes(scopes)
+    if not normalized_scopes:
+        raise ValueError("At least one OAuth scope is required.")
+
+    _, _, InstalledAppFlow = _import_google_clients()
+
+    if not resolved_config.credentials_path.exists():
+        raise FileNotFoundError(
+            f"OAuth client file not found: {resolved_config.credentials_path}"
+        )
+
+    flow = InstalledAppFlow.from_client_secrets_file(
+        str(resolved_config.credentials_path),
+        normalized_scopes,
+        state=state,
+    )
+    flow.redirect_uri = redirect_uri
+    flow.fetch_token(authorization_response=authorization_response)
+    creds = flow.credentials
+    resolved_config.token_path.write_text(creds.to_json(), encoding="utf-8")
+    return creds
+
+
+def _import_google_clients() -> tuple[Any, Any, Any]:
+    try:
+        from google.auth.transport.requests import Request
+        from google.oauth2.credentials import Credentials
+        from google_auth_oauthlib.flow import InstalledAppFlow
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing Google client libraries. Install them with "
+            "`uv sync --extra google` and run this project with "
+            "`uv run python ...`."
+        ) from exc
+
+    return Request, Credentials, InstalledAppFlow
+
+
+def _normalize_scopes(scopes: Iterable[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(str(scope).strip() for scope in scopes if str(scope).strip()))
 
 
 def _credentials_cover_scopes(creds: Any, scopes: Iterable[str]) -> bool:
@@ -167,8 +261,13 @@ def build_google_service(
     *,
     scopes: Iterable[str],
     config: GoogleOAuthConfig | None = None,
+    allow_interactive: bool = True,
 ) -> Any:
-    creds = load_google_user_credentials(scopes, config=config)
+    creds = load_google_user_credentials(
+        scopes,
+        config=config,
+        allow_interactive=allow_interactive,
+    )
     try:
         from googleapiclient.discovery import build
     except ImportError as exc:

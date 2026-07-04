@@ -41,6 +41,15 @@ const workflowSteps = [
 ];
 
 const app = document.querySelector("#app");
+let oauthPollGeneration = 0;
+
+const emptyOAuthDialog = {
+  open: false,
+  intent: "read",
+  authorizationUrl: "",
+  statusUrl: "",
+  errorMessage: "",
+};
 
 const state = {
   isLoggedIn: false,
@@ -60,6 +69,7 @@ const state = {
   posted: false,
   postMessage: "",
   postMessageTone: "success",
+  oauthDialog: { ...emptyOAuthDialog },
 };
 
 state.agentOutput = normalizeAgentOutput(buildPlaceholderOutput());
@@ -435,7 +445,7 @@ function dueDateDistanceCount() {
 }
 
 function render() {
-  app.innerHTML = state.isLoggedIn ? renderShell() : renderLogin();
+  app.innerHTML = `${state.isLoggedIn ? renderShell() : renderLogin()}${renderOAuthDialog()}`;
   bindEvents();
 }
 
@@ -459,6 +469,45 @@ function renderLogin() {
         <button class="button primary" data-action="login">Google Classroomに接続</button>
       </section>
     </main>
+  `;
+}
+
+function renderOAuthDialog() {
+  if (!state.oauthDialog.open) {
+    return "";
+  }
+
+  const copy = oauthIntentCopy(state.oauthDialog.intent);
+  return `
+    <div class="modal-backdrop" role="presentation">
+      <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="oauth_dialog_title">
+        <div class="card-header">
+          <div>
+            <p class="login-kicker">Google Classroom OAuth</p>
+            <h2 id="oauth_dialog_title">${escapeHtml(copy.title)}</h2>
+          </div>
+          <button class="button ghost compact" data-action="oauth-close">閉じる</button>
+        </div>
+        <p class="subtle">${escapeHtml(copy.description)}</p>
+        <div class="warning-list">
+          <div class="warning-item">
+            Google の認可画面は別ウィンドウで開きます。許可後はこの画面に戻ってください。
+          </div>
+          ${
+            state.oauthDialog.errorMessage
+              ? `<div class="error-item"><strong>OAuth</strong><span>${escapeHtml(state.oauthDialog.errorMessage)}</span></div>`
+              : ""
+          }
+        </div>
+        <div class="action-row" style="margin-top: 18px;">
+          <button class="button primary" data-action="oauth-open">認可画面を開く</button>
+          <a class="button" href="${escapeHtml(state.oauthDialog.authorizationUrl)}" target="_blank" rel="noopener noreferrer">別タブで開く</a>
+        </div>
+        <p class="subtle" style="margin: 14px 0 0;">
+          画面が開かない場合は、ブラウザのポップアップブロック設定を確認してください。
+        </p>
+      </section>
+    </div>
   `;
 }
 
@@ -1117,6 +1166,97 @@ function renderConfirm() {
   `;
 }
 
+function oauthIntentCopy(intent) {
+  if (intent === "post") {
+    return {
+      title: "Classroom 投稿権限を許可してください",
+      description:
+        "教師承認後にお知らせを投稿するため、Google Classroom の投稿権限が必要です。",
+    };
+  }
+  return {
+    title: "Google Classroom への接続を許可してください",
+    description:
+      "コース一覧、課題、提出状況を取得するため、Google Classroom の読み取り権限が必要です。",
+  };
+}
+
+function resetOAuthDialog() {
+  state.oauthDialog = { ...emptyOAuthDialog };
+}
+
+function openOAuthPopupWindow() {
+  const popup = window.open(
+    state.oauthDialog.authorizationUrl,
+    "sansan-google-oauth",
+    "popup=yes,width=560,height=720",
+  );
+  if (!popup) {
+    state.oauthDialog.errorMessage =
+      "ポップアップを開けませんでした。下のリンクから別タブで開いてください。";
+    render();
+    return;
+  }
+  popup.focus();
+}
+
+async function ensureGoogleAuthorization(intent) {
+  const payload = await apiFetchJson(
+    `/api/live/oauth/start?intent=${encodeURIComponent(intent)}`,
+  );
+  if (payload.status === "authorized") {
+    oauthPollGeneration += 1;
+    resetOAuthDialog();
+    render();
+    return;
+  }
+  if (payload.status !== "authorization_required") {
+    throw new Error("OAuth 開始レスポンスが不正です。");
+  }
+
+  const generation = ++oauthPollGeneration;
+  state.oauthDialog = {
+    open: true,
+    intent,
+    authorizationUrl: payload.authorizationUrl ?? "",
+    statusUrl: payload.statusUrl ?? "",
+    errorMessage: "",
+  };
+  clearLoading();
+  render();
+  await waitForOAuthCompletion(generation, payload.statusUrl ?? "");
+}
+
+async function waitForOAuthCompletion(generation, statusUrl) {
+  const deadline = Date.now() + 5 * 60 * 1000;
+  while (Date.now() < deadline) {
+    if (generation !== oauthPollGeneration || !state.oauthDialog.open) {
+      const cancelled = new Error("OAuth flow was cancelled.");
+      cancelled.cancelled = true;
+      throw cancelled;
+    }
+
+    const payload = await apiFetchJson(statusUrl);
+    if (payload.status === "completed" || payload.status === "authorized") {
+      resetOAuthDialog();
+      render();
+      return;
+    }
+    if (payload.status === "error") {
+      state.oauthDialog.errorMessage =
+        payload.error?.message ?? "Google OAuth に失敗しました。";
+      render();
+      throw new Error(state.oauthDialog.errorMessage);
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+  }
+
+  state.oauthDialog.errorMessage =
+    "認可の完了を確認できませんでした。認可画面を開き直してください。";
+  render();
+  throw new Error(state.oauthDialog.errorMessage);
+}
+
 function validateEditableFields(updateState = true) {
   const errors = {};
   for (const field of state.agentOutput.gui.editableFields) {
@@ -1166,6 +1306,25 @@ async function apiFetchJson(path, options = {}) {
 }
 
 async function connectGoogle() {
+  try {
+    await ensureGoogleAuthorization("read");
+  } catch (error) {
+    if (error?.cancelled) {
+      state.scenario = scenarioModes.ready;
+      clearLoading();
+      render();
+      return;
+    }
+    handleRequestFailure(error, {
+      title: "Google Classroom への接続に失敗しました",
+      recommendedAction:
+        "OAuth の認可画面を開いて、Google Classroom の読み取り権限を許可してください。",
+      loggedOut: true,
+      view: "login",
+    });
+    return;
+  }
+
   setLoading("Google Classroom のコース一覧を取得しています。");
   try {
     const payload = await apiFetchJson("/api/live/courses");
@@ -1357,6 +1516,27 @@ async function postReminder() {
     return;
   }
 
+  try {
+    await ensureGoogleAuthorization("post");
+  } catch (error) {
+    if (error?.cancelled) {
+      state.scenario = scenarioModes.ready;
+      clearLoading();
+      render();
+      return;
+    }
+    const message =
+      error?.message ??
+      "Google Classroom の投稿権限を許可したうえで再試行してください。";
+    state.scenario = scenarioModes.ready;
+    clearLoading();
+    state.posted = false;
+    state.postMessage = message;
+    state.postMessageTone = "danger";
+    render();
+    return;
+  }
+
   setLoading("Classroom に投稿しています。");
   try {
     const payload = await apiFetchJson("/api/live/post-reminder", {
@@ -1479,6 +1659,22 @@ function bindEvents() {
   document.querySelectorAll("[data-action='approve-post']").forEach((button) => {
     button.addEventListener("click", () => {
       void postReminder();
+    });
+  });
+
+  document.querySelectorAll("[data-action='oauth-open']").forEach((button) => {
+    button.addEventListener("click", () => {
+      openOAuthPopupWindow();
+    });
+  });
+
+  document.querySelectorAll("[data-action='oauth-close']").forEach((button) => {
+    button.addEventListener("click", () => {
+      oauthPollGeneration += 1;
+      resetOAuthDialog();
+      state.scenario = scenarioModes.ready;
+      clearLoading();
+      render();
     });
   });
 }
