@@ -1,5 +1,7 @@
 # Google Classroom / CLI OAuth セットアップメモ
 
+この文書は、同一端末で CLI を動かす Desktop app OAuth を主対象にする。別端末ブラウザから GUI を使う場合は Web application クライアントを使い、callback は `http://<host>:<port>/oauth/google/callback` または `https://<host>/oauth/google/callback` にする。
+
 ## 1. 現状
 
 2026-07-03 時点で、このリポジトリには以下を追加済みです。
@@ -19,10 +21,9 @@
 - [sansan_competition/exporters.py](/Users/kimura/Desktop/SP活動/2年/後期/sansan-competition/sansan_competition/exporters.py)
   - 実出力の共通処理
 
-まだ入っていないもの:
+このメモで主対象にしていないもの:
 
-- Web GUI 向け OAuth ログイン画面
-- フロントエンド経由の OAuth コールバック処理
+- 別端末ブラウザ向け Web application OAuth の詳細運用
 - PDF の実バイナリ生成
 
 一方で、`kimu` 担当のデータ処理側は、Google API の実呼び出しがなくても進められる状態です。
@@ -71,7 +72,7 @@
 5. CLI を同一端末で使うなら Desktop app クライアント、別端末ブラウザから GUI を使うなら Web application クライアントを作る
 6. OAuth client JSON をサーバ側へ登録する
 7. `uv` か任意の仮想環境で Google クライアントライブラリを入れる
-8. OAuth を 1 回通して `token.json` を作る
+8. OAuth を 1 回通して、端末ごとの設定ディレクトリに `token.json` を作る
 9. Classroom API で最低限の読み取りを確認する
 10. その取得結果を `kimu` の正規化関数へ渡す
 
@@ -110,11 +111,12 @@
 
 1. Google Cloud Console で OAuth クライアントを作る
    - 同一端末の CLI 確認だけなら Desktop app
-   - 別端末ブラウザから GUI を使うなら Web application
+   - 別端末ブラウザから GUI を使うなら Web application。Authorized redirect URI は `http://<host>:<port>/oauth/google/callback` または `https://<host>/oauth/google/callback`
 2. Audience が `External` で Publishing status が `Testing` なら、`Google Auth platform > Audience > Test users` で利用する Google アカウントを追加する
 3. ダウンロードした JSON を登録する
    - GUI: ログイン画面の `OAuth client JSON を選択` から登録
    - CLI: `--credentials /path/to/client.json` を付けるか、端末ごとの設定ディレクトリへ保存
+   - repo root に `credentials.json` を置く前提ではない
 4. ライブラリを入れる
 5. 疎通確認スクリプトを実行する
 
@@ -123,7 +125,7 @@ uv sync --extra google
 uv run python scripts/classroom_oauth_smoke.py
 ```
 
-初回実行時はブラウザ認証が走り、成功すると token が端末ごとの設定ディレクトリに生成されます。
+初回実行時はブラウザ認証が走り、成功すると `token.json` が端末ごとの設定ディレクトリに生成されます。
 
 補足:
 

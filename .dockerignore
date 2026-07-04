@@ -1,0 +1,12 @@
+.git
+.github
+.pytest_cache
+.venv
+__pycache__
+*.pyc
+.firebase
+firebase-debug.log
+credentials.json
+token.json
+exports
+output

@@ -303,6 +303,56 @@ class OAuthTests(unittest.TestCase):
                 ),
             )
 
+    def test_validate_google_oauth_client_rejects_raw_ip_redirect_for_web_client(self) -> None:
+        self.credentials_path.write_text(
+            json.dumps(
+                {
+                    "web": {
+                        "client_id": "web-client-id",
+                        "client_secret": "dummy-secret",
+                        "redirect_uris": [
+                            "http://192.168.1.20:8000/oauth/google/callback"
+                        ],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(GoogleOAuthConfigurationError):
+            validate_google_oauth_client_for_redirect_uri(
+                "http://192.168.1.20:8000/oauth/google/callback",
+                config=GoogleOAuthConfig(
+                    credentials_path=self.credentials_path,
+                    token_path=self.token_path,
+                ),
+            )
+
+    def test_validate_google_oauth_client_requires_https_for_nonlocal_web_redirect(self) -> None:
+        self.credentials_path.write_text(
+            json.dumps(
+                {
+                    "web": {
+                        "client_id": "web-client-id",
+                        "client_secret": "dummy-secret",
+                        "redirect_uris": [
+                            "http://app.example.com/oauth/google/callback"
+                        ],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(GoogleOAuthConfigurationError):
+            validate_google_oauth_client_for_redirect_uri(
+                "http://app.example.com/oauth/google/callback",
+                config=GoogleOAuthConfig(
+                    credentials_path=self.credentials_path,
+                    token_path=self.token_path,
+                ),
+            )
+
     def test_save_google_oauth_client_file_uses_config_dir_and_clear_token_removes_cache(self) -> None:
         with patch.dict(
             os.environ,

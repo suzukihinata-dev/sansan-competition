@@ -1,0 +1,28 @@
+{
+  "hosting": {
+    "public": "public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/api/**",
+        "run": {
+          "serviceId": "sansan-competition",
+          "region": "asia-northeast1",
+          "pinTag": true
+        }
+      },
+      {
+        "source": "/oauth/google/callback",
+        "run": {
+          "serviceId": "sansan-competition",
+          "region": "asia-northeast1",
+          "pinTag": true
+        }
+      }
+    ]
+  }
+}

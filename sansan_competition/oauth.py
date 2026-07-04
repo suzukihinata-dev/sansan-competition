@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import os
 from dataclasses import dataclass
 import json
+import ipaddress
 from pathlib import Path
 import sys
 from typing import Any, Iterable
@@ -192,6 +193,7 @@ def validate_google_oauth_client_for_redirect_uri(
         return client_info
 
     if client_info.client_type == "web":
+        _validate_google_web_redirect_uri_shape(redirect_uri)
         if redirect_uri not in client_info.redirect_uris:
             raise GoogleOAuthConfigurationError(
                 "OAuth client の Authorized redirect URI に "
@@ -437,6 +439,37 @@ def _is_loopback_redirect_uri(redirect_uri: str) -> bool:
         "127.0.0.1",
         "::1",
     }
+
+
+def _validate_google_web_redirect_uri_shape(redirect_uri: str) -> None:
+    parsed = urlsplit(redirect_uri)
+    hostname = parsed.hostname or ""
+    if not hostname:
+        raise GoogleOAuthConfigurationError("redirect URI の host が不正です。")
+
+    if _is_loopback_redirect_uri(redirect_uri):
+        return
+
+    if _is_raw_ip_host(hostname):
+        raise GoogleOAuthConfigurationError(
+            "Google の Web application OAuth client では localhost 以外の生 IP を "
+            "Authorized redirect URI に使えません。別端末から使う場合は HTTPS のドメイン名 "
+            "またはトンネル URL を使ってください。"
+        )
+
+    if parsed.scheme != "https":
+        raise GoogleOAuthConfigurationError(
+            "Google の Web application OAuth client では localhost 以外の redirect URI は "
+            "HTTPS が必要です。"
+        )
+
+
+def _is_raw_ip_host(hostname: str) -> bool:
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+    return True
 
 
 def _normalize_scopes(scopes: Iterable[str]) -> tuple[str, ...]:
