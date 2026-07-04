@@ -158,15 +158,19 @@ PR での扱い:
 - `sansan_competition/exporters.py`
   - Markdown 保存と Drive API による Google Document 作成
 
-まだ入っていないもの:
+このブランチでは GUI からの OAuth 開始とコールバック処理まで入っています。未実装なのは主に次です。
 
-- Web GUI 用の Google ログイン画面
-- フロントエンドからの OAuth コールバック処理
 - PDF の実バイナリ生成
 
 `kimu` 担当の正規化・契約・判定ロジックはサンプル入力だけでも進められますが、MVP 全体では OAuth と Classroom 取得は必須です。セットアップ方針と CLI の疎通確認手順は [docs/google-classroom-cli-oauth-setup.md](/Users/kimura/Desktop/SP活動/2年/後期/sansan-competition/docs/google-classroom-cli-oauth-setup.md) にまとめました。
 
-疎通確認だけなら、次でコース一覧取得まで確認できます。
+CLI の疎通確認だけなら、次でコース一覧取得まで確認できます。`--credentials` / `--token` を省略した場合は、端末ごとの設定ディレクトリを使います。
+
+- macOS: `~/Library/Application Support/sansan-competition/`
+- Linux: `~/.config/sansan-competition/`
+- Windows: `%APPDATA%/sansan-competition/`
+
+別端末ブラウザから GUI を使う場合は、Desktop app ではなく Web application の OAuth client が必要です。Google Cloud 側で、実際にアクセスする URL に合わせて `.../oauth/google/callback` を Authorized redirect URI に追加してください。
 
 OAuth consent screen の Audience が `External` かつ Publishing status が `Testing` の場合、実行前に利用する Google アカウントを `Google Auth platform > Audience > Test users` に追加してください。未追加だと Google 側で 403 `access_denied` になります。
 

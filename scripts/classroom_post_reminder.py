@@ -24,13 +24,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--credentials",
-        default="credentials.json",
-        help="Path to the OAuth client secret JSON file.",
+        default=None,
+        help="Path to the OAuth client secret JSON file. Omit to use the app default.",
     )
     parser.add_argument(
         "--token",
-        default="token.json",
-        help="Path to the cached user token JSON file.",
+        default=None,
+        help="Path to the cached user token JSON file. Omit to use the app default.",
     )
     parser.add_argument(
         "--approved",

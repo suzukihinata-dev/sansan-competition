@@ -16,9 +16,14 @@ from sansan_competition.oauth import (
     CLASSROOM_STUDENT_SUBMISSIONS_STUDENTS_READONLY_SCOPE,
     GoogleOAuthConfig,
     GoogleOAuthAuthorizationRequiredError,
+    GoogleOAuthConfigurationError,
+    clear_google_oauth_token,
     complete_google_oauth_authorization,
+    default_google_oauth_client_path,
     load_google_user_credentials,
+    save_google_oauth_client_file,
     start_google_oauth_authorization,
+    validate_google_oauth_client_for_redirect_uri,
 )
 
 
@@ -262,6 +267,71 @@ class OAuthTests(unittest.TestCase):
                     ),
                     allow_interactive=False,
                 )
+
+    def test_validate_google_oauth_client_rejects_remote_browser_for_installed_client(self) -> None:
+        with self.assertRaises(GoogleOAuthConfigurationError):
+            validate_google_oauth_client_for_redirect_uri(
+                "http://192.168.10.20:8000/oauth/google/callback",
+                config=GoogleOAuthConfig(
+                    credentials_path=self.credentials_path,
+                    token_path=self.token_path,
+                ),
+            )
+
+    def test_validate_google_oauth_client_requires_registered_redirect_uri_for_web_client(self) -> None:
+        self.credentials_path.write_text(
+            json.dumps(
+                {
+                    "web": {
+                        "client_id": "web-client-id",
+                        "client_secret": "dummy-secret",
+                        "redirect_uris": [
+                            "http://127.0.0.1:8000/oauth/google/callback"
+                        ],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(GoogleOAuthConfigurationError):
+            validate_google_oauth_client_for_redirect_uri(
+                "http://127.0.0.1:9000/oauth/google/callback",
+                config=GoogleOAuthConfig(
+                    credentials_path=self.credentials_path,
+                    token_path=self.token_path,
+                ),
+            )
+
+    def test_save_google_oauth_client_file_uses_config_dir_and_clear_token_removes_cache(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"SANSAN_GOOGLE_OAUTH_CONFIG_DIR": self.temp_dir.name},
+            clear=False,
+        ):
+            client_info = save_google_oauth_client_file(
+                json.dumps(
+                    {
+                        "web": {
+                            "client_id": "web-client-id",
+                            "client_secret": "dummy-secret",
+                            "redirect_uris": [
+                                "http://127.0.0.1:8000/oauth/google/callback"
+                            ],
+                        }
+                    }
+                )
+            )
+
+            expected_client_path = default_google_oauth_client_path()
+            expected_token_path = expected_client_path.parent / "token.json"
+            expected_token_path.write_text('{"token":"cached"}', encoding="utf-8")
+
+            self.assertEqual(client_info.path, expected_client_path)
+            self.assertTrue(expected_client_path.exists())
+
+            clear_google_oauth_token()
+            self.assertFalse(expected_token_path.exists())
 
     def test_start_google_oauth_authorization_returns_url_and_state(self) -> None:
         cached_creds = FakeCreds(

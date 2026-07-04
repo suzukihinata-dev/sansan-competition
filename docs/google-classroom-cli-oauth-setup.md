@@ -68,8 +68,8 @@
 2. 必要 API を有効化する
 3. OAuth consent screen を設定する
 4. Audience が `External` かつ Publishing status が `Testing` の間は、利用する Google アカウントを `Test users` に追加する
-5. CLI 検証用の Desktop app クライアントを作る
-6. `credentials.json` をローカルに置く
+5. CLI を同一端末で使うなら Desktop app クライアント、別端末ブラウザから GUI を使うなら Web application クライアントを作る
+6. OAuth client JSON をサーバ側へ登録する
 7. `uv` か任意の仮想環境で Google クライアントライブラリを入れる
 8. OAuth を 1 回通して `token.json` を作る
 9. Classroom API で最低限の読み取りを確認する
@@ -108,9 +108,13 @@
 
 ## 6. CLI OAuth の最小確認手順
 
-1. Google Cloud Console で Desktop app の OAuth クライアントを作る
+1. Google Cloud Console で OAuth クライアントを作る
+   - 同一端末の CLI 確認だけなら Desktop app
+   - 別端末ブラウザから GUI を使うなら Web application
 2. Audience が `External` で Publishing status が `Testing` なら、`Google Auth platform > Audience > Test users` で利用する Google アカウントを追加する
-3. ダウンロードした JSON を、このリポジトリ直下の `credentials.json` に置く
+3. ダウンロードした JSON を登録する
+   - GUI: ログイン画面の `OAuth client JSON を選択` から登録
+   - CLI: `--credentials /path/to/client.json` を付けるか、端末ごとの設定ディレクトリへ保存
 4. ライブラリを入れる
 5. 疎通確認スクリプトを実行する
 
@@ -119,13 +123,14 @@ uv sync --extra google
 uv run python scripts/classroom_oauth_smoke.py
 ```
 
-初回実行時はブラウザ認証が走り、成功すると `token.json` が生成されます。
+初回実行時はブラウザ認証が走り、成功すると token が端末ごとの設定ディレクトリに生成されます。
 
 補足:
 
 - macOS のシステム Python では `python3 -m pip install -e '.[google]'` が `externally-managed-environment` で失敗することがあります。このリポジトリでは `uv` を使う方が安全です。
 - Google 側で 403 `access_denied` が出る場合、コードより先に `Test users` 設定を疑うべきです。
 - OAuth app が `Testing` の間に発行される refresh token は、Google 公式仕様上 7 日で失効します。長期運用前提なら公開前でも再認証前提で扱うか、必要な verification を進める必要があります。
+- GUI を別端末ブラウザから使う場合は、Web application クライアントの Authorized redirect URI に `https://<host>/oauth/google/callback` または `http://<host>:<port>/oauth/google/callback` を追加してください。Desktop app クライアントでは別端末ブラウザの callback を受けられません。
 
 ## 6.5 実データで提出分析を確認する
 

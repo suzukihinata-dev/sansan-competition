@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
+import tempfile
 import types
 import unittest
+from pathlib import Path
 from urllib import error, request
 from unittest.mock import patch
 
@@ -90,17 +93,18 @@ class LiveApiTests(unittest.TestCase):
         *,
         method: str = "GET",
         payload: dict | None = None,
+        headers: dict | None = None,
     ) -> tuple[int, dict]:
         body = None
-        headers = {}
+        request_headers = dict(headers or {})
         if payload is not None:
             body = json.dumps(payload).encode("utf-8")
-            headers["Content-Type"] = "application/json"
+            request_headers["Content-Type"] = "application/json"
 
         req = request.Request(
             f"{self.base_url}{path}",
             data=body,
-            headers=headers,
+            headers=request_headers,
             method=method,
         )
         try:
@@ -220,10 +224,17 @@ class LiveApiTests(unittest.TestCase):
         self.assertEqual(payload["error"]["code"], "CLASSROOM_API_NOT_FOUND")
 
     def test_oauth_start_reports_authorized_when_cached_token_is_ready(self) -> None:
-        with patch.object(
-            app_main,
-            "load_google_user_credentials",
-            return_value=object(),
+        with (
+            patch.object(
+                app_main,
+                "validate_google_oauth_client_for_redirect_uri",
+                return_value=object(),
+            ),
+            patch.object(
+                app_main,
+                "load_google_user_credentials",
+                return_value=object(),
+            ),
         ):
             status_code, payload = self._request_json("/api/live/oauth/start?intent=read")
 
@@ -232,10 +243,17 @@ class LiveApiTests(unittest.TestCase):
         self.assertEqual(payload["intent"], "read")
 
     def test_oauth_check_reports_authorized_when_cached_token_is_ready(self) -> None:
-        with patch.object(
-            app_main,
-            "load_google_user_credentials",
-            return_value=object(),
+        with (
+            patch.object(
+                app_main,
+                "validate_google_oauth_client_for_redirect_uri",
+                return_value=object(),
+            ),
+            patch.object(
+                app_main,
+                "load_google_user_credentials",
+                return_value=object(),
+            ),
         ):
             status_code, payload = self._request_json("/api/live/oauth/check?intent=read")
 
@@ -244,10 +262,17 @@ class LiveApiTests(unittest.TestCase):
         self.assertEqual(payload["intent"], "read")
 
     def test_oauth_check_reports_authorization_required_without_creating_session(self) -> None:
-        with patch.object(
-            app_main,
-            "load_google_user_credentials",
-            side_effect=app_main.GoogleOAuthAuthorizationRequiredError("required"),
+        with (
+            patch.object(
+                app_main,
+                "validate_google_oauth_client_for_redirect_uri",
+                return_value=object(),
+            ),
+            patch.object(
+                app_main,
+                "load_google_user_credentials",
+                side_effect=app_main.GoogleOAuthAuthorizationRequiredError("required"),
+            ),
         ):
             status_code, payload = self._request_json("/api/live/oauth/check?intent=read")
 
@@ -266,6 +291,11 @@ class LiveApiTests(unittest.TestCase):
         )
 
         with (
+            patch.object(
+                app_main,
+                "validate_google_oauth_client_for_redirect_uri",
+                return_value=object(),
+            ),
             patch.object(
                 app_main,
                 "load_google_user_credentials",
@@ -295,9 +325,93 @@ class LiveApiTests(unittest.TestCase):
                 app_main.OAUTH_INTENT_SCOPES["read"],
             )
             self.assertEqual(
+                app_main.OAUTH_SESSIONS["oauth-state-123"]["redirectUri"],
+                f"{self.base_url}{app_main.OAUTH_CALLBACK_PATH}",
+            )
+            self.assertEqual(
                 app_main.OAUTH_SESSIONS["oauth-state-123"]["codeVerifier"],
                 "verifier-123",
             )
+
+    def test_oauth_config_reports_missing_client_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.dict(
+                os.environ,
+                {
+                    "SANSAN_GOOGLE_OAUTH_CONFIG_DIR": temp_dir,
+                    "SANSAN_GOOGLE_OAUTH_CLIENT_FILE": str(Path(temp_dir) / "credentials.json"),
+                    "SANSAN_GOOGLE_OAUTH_TOKEN_FILE": str(Path(temp_dir) / "token.json"),
+                },
+                clear=False,
+            ):
+                status_code, payload = self._request_json("/api/live/oauth/config")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["status"], "configuration_required")
+        self.assertFalse(payload["clientFilePresent"])
+        self.assertEqual(
+            payload["redirectUri"],
+            f"{self.base_url}{app_main.OAUTH_CALLBACK_PATH}",
+        )
+
+    def test_oauth_config_upload_persists_web_client_and_marks_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.dict(
+                os.environ,
+                {
+                    "SANSAN_GOOGLE_OAUTH_CONFIG_DIR": temp_dir,
+                    "SANSAN_GOOGLE_OAUTH_CLIENT_FILE": str(Path(temp_dir) / "credentials.json"),
+                    "SANSAN_GOOGLE_OAUTH_TOKEN_FILE": str(Path(temp_dir) / "token.json"),
+                },
+                clear=False,
+            ):
+                status_code, payload = self._request_json(
+                    "/api/live/oauth/config",
+                    method="POST",
+                    payload={
+                        "clientFileContent": json.dumps(
+                            {
+                                "web": {
+                                    "client_id": "web-client-id",
+                                    "client_secret": "secret",
+                                    "redirect_uris": [
+                                        f"{self.base_url}{app_main.OAUTH_CALLBACK_PATH}"
+                                    ],
+                                }
+                            }
+                        )
+                    },
+                )
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["status"], "ready")
+        self.assertTrue(payload["clientFilePresent"])
+        self.assertEqual(payload["clientType"], "web")
+
+    def test_oauth_config_requires_web_client_for_remote_browser(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            credentials_path = Path(temp_dir) / "credentials.json"
+            credentials_path.write_text(
+                json.dumps({"installed": {"client_id": "desktop-client-id"}}),
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "SANSAN_GOOGLE_OAUTH_CONFIG_DIR": temp_dir,
+                    "SANSAN_GOOGLE_OAUTH_CLIENT_FILE": str(credentials_path),
+                    "SANSAN_GOOGLE_OAUTH_TOKEN_FILE": str(Path(temp_dir) / "token.json"),
+                },
+                clear=False,
+            ):
+                status_code, payload = self._request_json(
+                    "/api/live/oauth/config",
+                    headers={"Host": "classroom.example.test"},
+                )
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["status"], "configuration_required")
+        self.assertIn("Web application", payload["recommendedAction"])
 
     def test_oauth_status_returns_pending_session(self) -> None:
         with app_main.OAUTH_SESSIONS_LOCK:

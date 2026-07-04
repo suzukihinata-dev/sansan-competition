@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import sys
 from typing import Any, Iterable
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
@@ -19,21 +20,45 @@ CLASSROOM_ROSTERS_READONLY_SCOPE = "https://www.googleapis.com/auth/classroom.ro
 CLASSROOM_ANNOUNCEMENTS_SCOPE = "https://www.googleapis.com/auth/classroom.announcements"
 DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
 DOCUMENTS_SCOPE = "https://www.googleapis.com/auth/documents"
+GOOGLE_OAUTH_CONFIG_DIR_ENV = "SANSAN_GOOGLE_OAUTH_CONFIG_DIR"
+GOOGLE_OAUTH_CLIENT_FILE_ENV = "SANSAN_GOOGLE_OAUTH_CLIENT_FILE"
+GOOGLE_OAUTH_TOKEN_FILE_ENV = "SANSAN_GOOGLE_OAUTH_TOKEN_FILE"
+GOOGLE_OAUTH_CONFIG_DIR_NAME = "sansan-competition"
+GOOGLE_OAUTH_CLIENT_FILENAME = "credentials.json"
+GOOGLE_OAUTH_TOKEN_FILENAME = "token.json"
+LEGACY_GOOGLE_OAUTH_CLIENT_PATH = Path("credentials.json")
+LEGACY_GOOGLE_OAUTH_TOKEN_PATH = Path("token.json")
 
 
 @dataclass(slots=True)
 class GoogleOAuthConfig:
-    credentials_path: Path = Path("credentials.json")
-    token_path: Path = Path("token.json")
+    credentials_path: Path | None = None
+    token_path: Path | None = None
     local_server_port: int = 0
 
     def __post_init__(self) -> None:
-        self.credentials_path = Path(self.credentials_path)
-        self.token_path = Path(self.token_path)
+        self.credentials_path = _resolve_google_oauth_credentials_path(self.credentials_path)
+        self.token_path = _resolve_google_oauth_token_path(
+            self.token_path,
+            credentials_path=self.credentials_path,
+        )
 
 
 class GoogleOAuthAuthorizationRequiredError(RuntimeError):
     """Raised when an interactive OAuth grant is required but disabled."""
+
+
+class GoogleOAuthConfigurationError(RuntimeError):
+    """Raised when the configured OAuth client cannot satisfy the current flow."""
+
+
+@dataclass(slots=True)
+class GoogleOAuthClientInfo:
+    path: Path
+    exists: bool
+    client_type: str | None
+    client_id: str | None
+    redirect_uris: tuple[str, ...]
 
 
 @dataclass(slots=True)
@@ -56,6 +81,127 @@ def default_classroom_read_scopes(*, include_rosters: bool = True) -> tuple[str,
 
 def default_classroom_post_scopes() -> tuple[str, ...]:
     return (CLASSROOM_ANNOUNCEMENTS_SCOPE,)
+
+
+def default_google_oauth_config_dir() -> Path:
+    override = os.environ.get(GOOGLE_OAUTH_CONFIG_DIR_ENV, "").strip()
+    if override:
+        return Path(override).expanduser()
+
+    if os.name == "nt":
+        base = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming"))
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+    return base / GOOGLE_OAUTH_CONFIG_DIR_NAME
+
+
+def default_google_oauth_client_path() -> Path:
+    return default_google_oauth_config_dir() / GOOGLE_OAUTH_CLIENT_FILENAME
+
+
+def default_google_oauth_token_path() -> Path:
+    return default_google_oauth_config_dir() / GOOGLE_OAUTH_TOKEN_FILENAME
+
+
+def inspect_google_oauth_client(
+    config: GoogleOAuthConfig | None = None,
+) -> GoogleOAuthClientInfo:
+    resolved_config = config or GoogleOAuthConfig()
+    path = resolved_config.credentials_path
+    if not path.exists():
+        return GoogleOAuthClientInfo(
+            path=path,
+            exists=False,
+            client_type=None,
+            client_id=None,
+            redirect_uris=(),
+        )
+
+    payload = _load_google_oauth_payload(path)
+    client_type, client_section = _extract_google_oauth_client_section(payload)
+    redirect_uris = ()
+    if client_type == "web":
+        redirect_uris = tuple(
+            str(item).strip()
+            for item in client_section.get("redirect_uris", [])
+            if str(item).strip()
+        )
+    client_id = str(client_section.get("client_id") or "").strip() or None
+    return GoogleOAuthClientInfo(
+        path=path,
+        exists=True,
+        client_type=client_type,
+        client_id=client_id,
+        redirect_uris=redirect_uris,
+    )
+
+
+def save_google_oauth_client_file(
+    content: str,
+    *,
+    path: Path | None = None,
+) -> GoogleOAuthClientInfo:
+    payload = json.loads(content)
+    if not isinstance(payload, dict):
+        raise GoogleOAuthConfigurationError("OAuth client JSON はオブジェクトである必要があります。")
+    _extract_google_oauth_client_section(payload)
+
+    target_path = Path(path or default_google_oauth_client_path()).expanduser()
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return inspect_google_oauth_client(
+        GoogleOAuthConfig(
+            credentials_path=target_path,
+            token_path=default_google_oauth_token_path(),
+        )
+    )
+
+
+def clear_google_oauth_token(
+    *,
+    path: Path | None = None,
+) -> None:
+    target_path = Path(path or default_google_oauth_token_path()).expanduser()
+    try:
+        target_path.unlink()
+    except FileNotFoundError:
+        return
+
+
+def validate_google_oauth_client_for_redirect_uri(
+    redirect_uri: str,
+    *,
+    config: GoogleOAuthConfig | None = None,
+) -> GoogleOAuthClientInfo:
+    client_info = inspect_google_oauth_client(config)
+    if not client_info.exists:
+        raise FileNotFoundError(f"OAuth client file not found: {client_info.path}")
+
+    if client_info.client_type == "installed":
+        if not _is_loopback_redirect_uri(redirect_uri):
+            raise GoogleOAuthConfigurationError(
+                "現在の OAuth client は desktop app 用です。"
+                "別端末のブラウザから使うには Google Cloud で Web application の OAuth client を作成し、"
+                f"Authorized redirect URI に {redirect_uri} を追加した JSON を登録してください。"
+            )
+        return client_info
+
+    if client_info.client_type == "web":
+        if redirect_uri not in client_info.redirect_uris:
+            raise GoogleOAuthConfigurationError(
+                "OAuth client の Authorized redirect URI に "
+                f"{redirect_uri} を追加してください。"
+            )
+        return client_info
+
+    raise GoogleOAuthConfigurationError(
+        "OAuth client JSON に `web` または `installed` 設定がありません。"
+    )
 
 
 def load_google_user_credentials(
@@ -105,7 +251,7 @@ def load_google_user_credentials(
                 flow,
                 port=resolved_config.local_server_port,
             )
-        resolved_config.token_path.write_text(creds.to_json(), encoding="utf-8")
+        _write_google_oauth_token(resolved_config.token_path, creds.to_json())
 
     return creds
 
@@ -194,7 +340,7 @@ def complete_google_oauth_authorization(
             "Granted OAuth scopes do not cover the requested access. "
             f"requested={normalized_scopes!r} granted={granted_scopes!r}"
         )
-    resolved_config.token_path.write_text(creds.to_json(), encoding="utf-8")
+    _write_google_oauth_token(resolved_config.token_path, creds.to_json())
     return creds
 
 
@@ -211,6 +357,86 @@ def _import_google_clients() -> tuple[Any, Any, Any]:
         ) from exc
 
     return Request, Credentials, InstalledAppFlow
+
+
+def _resolve_google_oauth_credentials_path(path: Path | None) -> Path:
+    if path is not None:
+        return Path(path).expanduser()
+
+    override = os.environ.get(GOOGLE_OAUTH_CLIENT_FILE_ENV, "").strip()
+    if override:
+        return Path(override).expanduser()
+
+    default_path = default_google_oauth_client_path()
+    if default_path.exists():
+        return default_path
+    if LEGACY_GOOGLE_OAUTH_CLIENT_PATH.exists():
+        return LEGACY_GOOGLE_OAUTH_CLIENT_PATH
+    return default_path
+
+
+def _resolve_google_oauth_token_path(
+    path: Path | None,
+    *,
+    credentials_path: Path,
+) -> Path:
+    if path is not None:
+        return Path(path).expanduser()
+
+    override = os.environ.get(GOOGLE_OAUTH_TOKEN_FILE_ENV, "").strip()
+    if override:
+        return Path(override).expanduser()
+
+    default_path = default_google_oauth_token_path()
+    if credentials_path == default_google_oauth_client_path():
+        return default_path
+    if credentials_path == LEGACY_GOOGLE_OAUTH_CLIENT_PATH and LEGACY_GOOGLE_OAUTH_TOKEN_PATH.exists():
+        return LEGACY_GOOGLE_OAUTH_TOKEN_PATH
+    if default_path.exists():
+        return default_path
+    if LEGACY_GOOGLE_OAUTH_TOKEN_PATH.exists():
+        return LEGACY_GOOGLE_OAUTH_TOKEN_PATH
+    return default_path
+
+
+def _load_google_oauth_payload(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise GoogleOAuthConfigurationError(
+            f"OAuth client JSON を読み取れませんでした: {path}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise GoogleOAuthConfigurationError(
+            f"OAuth client JSON はオブジェクトである必要があります: {path}"
+        )
+    return payload
+
+
+def _write_google_oauth_token(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def _extract_google_oauth_client_section(
+    payload: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    if isinstance(payload.get("web"), dict):
+        return "web", payload["web"]
+    if isinstance(payload.get("installed"), dict):
+        return "installed", payload["installed"]
+    raise GoogleOAuthConfigurationError(
+        "OAuth client JSON に `web` または `installed` セクションが必要です。"
+    )
+
+
+def _is_loopback_redirect_uri(redirect_uri: str) -> bool:
+    parsed = urlsplit(redirect_uri)
+    return parsed.scheme in {"http", "https"} and parsed.hostname in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }
 
 
 def _normalize_scopes(scopes: Iterable[str]) -> tuple[str, ...]:
