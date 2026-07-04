@@ -113,7 +113,10 @@ def start_google_oauth_authorization(
     config: GoogleOAuthConfig | None = None,
 ) -> GoogleOAuthAuthorizationRequest:
     resolved_config = config or GoogleOAuthConfig()
-    normalized_scopes = _normalize_scopes(scopes)
+    normalized_scopes = _merge_requested_and_cached_scopes(
+        scopes,
+        token_path=resolved_config.token_path,
+    )
     if not normalized_scopes:
         raise ValueError("At least one OAuth scope is required.")
 
@@ -150,7 +153,10 @@ def complete_google_oauth_authorization(
     config: GoogleOAuthConfig | None = None,
 ) -> Any:
     resolved_config = config or GoogleOAuthConfig()
-    normalized_scopes = _normalize_scopes(scopes)
+    normalized_scopes = _merge_requested_and_cached_scopes(
+        scopes,
+        token_path=resolved_config.token_path,
+    )
     if not normalized_scopes:
         raise ValueError("At least one OAuth scope is required.")
 
@@ -190,6 +196,16 @@ def _import_google_clients() -> tuple[Any, Any, Any]:
 
 def _normalize_scopes(scopes: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(str(scope).strip() for scope in scopes if str(scope).strip()))
+
+
+def _merge_requested_and_cached_scopes(
+    scopes: Iterable[str],
+    *,
+    token_path: Path,
+) -> tuple[str, ...]:
+    requested = list(_normalize_scopes(scopes))
+    cached = list(_read_token_scopes(token_path))
+    return _normalize_scopes([*requested, *cached])
 
 
 def _credentials_cover_scopes(creds: Any, scopes: Iterable[str]) -> bool:

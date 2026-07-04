@@ -9,6 +9,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from sansan_competition.oauth import (
+    CLASSROOM_ANNOUNCEMENTS_SCOPE,
+    CLASSROOM_COURSES_READONLY_SCOPE,
     CLASSROOM_COURSEWORK_STUDENTS_READONLY_SCOPE,
     CLASSROOM_STUDENT_SUBMISSIONS_STUDENTS_READONLY_SCOPE,
     GoogleOAuthConfig,
@@ -289,6 +291,49 @@ class OAuthTests(unittest.TestCase):
                     "prompt": "consent",
                 }
             ],
+        )
+
+    def test_start_google_oauth_authorization_preserves_cached_scopes(self) -> None:
+        cached_creds = FakeCreds(
+            valid=True,
+            scopes=(CLASSROOM_ANNOUNCEMENTS_SCOPE,),
+            has_scopes_result=True,
+        )
+        refreshed_creds = FakeCreds(
+            valid=True,
+            scopes=(CLASSROOM_COURSES_READONLY_SCOPE, CLASSROOM_ANNOUNCEMENTS_SCOPE),
+            has_scopes_result=True,
+        )
+        self.token_path.write_text(
+            json.dumps(
+                {
+                    "token": "old",
+                    "scopes": [CLASSROOM_ANNOUNCEMENTS_SCOPE],
+                }
+            ),
+            encoding="utf-8",
+        )
+        modules_patch, _ = self._patch_google_modules(
+            cached_creds=cached_creds,
+            refreshed_creds=refreshed_creds,
+        )
+
+        with modules_patch:
+            request = start_google_oauth_authorization(
+                (CLASSROOM_COURSES_READONLY_SCOPE,),
+                redirect_uri="http://127.0.0.1:8000/oauth/google/callback",
+                config=GoogleOAuthConfig(
+                    credentials_path=self.credentials_path,
+                    token_path=self.token_path,
+                ),
+            )
+
+        self.assertEqual(
+            request.scopes,
+            (
+                CLASSROOM_COURSES_READONLY_SCOPE,
+                CLASSROOM_ANNOUNCEMENTS_SCOPE,
+            ),
         )
 
     def test_complete_google_oauth_authorization_writes_token(self) -> None:
