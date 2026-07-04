@@ -448,6 +448,9 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/api/live/oauth/check":
+            self._handle_oauth_check(parsed)
+            return
         if parsed.path == "/api/live/oauth/start":
             self._handle_oauth_start(parsed)
             return
@@ -648,6 +651,65 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
             )
         except Exception as exc:
             error = resolve_agent_error(exc, fallback_code=ErrorCode.CLASSROOM_POST_FAILED)
+            self._send_json(
+                500,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "status": "error",
+                    "error": error.to_error_item(),
+                },
+            )
+
+    def _handle_oauth_check(self, parsed: Any) -> None:
+        request_id = build_live_request_id("oauth_check")
+        intent = self._require_query_value(parsed, "intent")
+        if intent is None:
+            return
+
+        scopes = OAUTH_INTENT_SCOPES.get(intent)
+        if scopes is None:
+            self._send_json(
+                400,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "status": "error",
+                    "error": {
+                        "code": ErrorCode.INVALID_AGENT_OUTPUT,
+                        "message": f"Unsupported OAuth intent: {intent}",
+                        "recoverable": False,
+                    },
+                },
+            )
+            return
+
+        try:
+            load_google_user_credentials(scopes, allow_interactive=False)
+            self._send_json(
+                200,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "status": "authorized",
+                    "intent": intent,
+                },
+            )
+        except GoogleOAuthAuthorizationRequiredError:
+            self._send_json(
+                200,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "status": "authorization_required",
+                    "intent": intent,
+                },
+            )
+        except Exception as exc:
+            error = resolve_agent_error(
+                exc,
+                fallback_code=ErrorCode.GOOGLE_AUTH_EXPIRED,
+            )
             self._send_json(
                 500,
                 {

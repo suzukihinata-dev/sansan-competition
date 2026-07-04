@@ -42,6 +42,7 @@ const workflowSteps = [
 
 const app = document.querySelector("#app");
 let oauthPollGeneration = 0;
+const manualLogoutStorageKey = "sansan-classroom-manual-logout";
 
 const emptyOAuthDialog = {
   open: false,
@@ -75,6 +76,7 @@ const state = {
 state.agentOutput = normalizeAgentOutput(buildPlaceholderOutput());
 resetEditableValues();
 render();
+void bootstrapGoogleSession();
 
 function buildPlaceholderOutput({
   title = "提出状況を取得してください",
@@ -464,6 +466,13 @@ function renderLogin() {
         ${
           state.scenario === scenarioModes.error
             ? renderAlert("danger", state.agentOutput.summary.shortSummary)
+            : ""
+        }
+        ${
+          state.scenario === scenarioModes.loading
+            ? `<p class="subtle">${escapeHtml(
+                state.loadingMessage || "保存済みセッションを確認しています。",
+              )}</p>`
             : ""
         }
         <button class="button primary" data-action="login">Google Classroomに接続</button>
@@ -1305,47 +1314,54 @@ async function apiFetchJson(path, options = {}) {
   return payload;
 }
 
-async function connectGoogle() {
-  try {
-    await ensureGoogleAuthorization("read");
-  } catch (error) {
-    if (error?.cancelled) {
-      state.scenario = scenarioModes.ready;
-      clearLoading();
-      render();
-      return;
-    }
-    handleRequestFailure(error, {
-      title: "Google Classroom への接続に失敗しました",
-      recommendedAction:
-        "OAuth の認可画面を開いて、Google Classroom の読み取り権限を許可してください。",
-      loggedOut: true,
-      view: "login",
+async function loadCoursesAfterAuthorization() {
+  setLoading("Google Classroom のコース一覧を取得しています。");
+  const payload = await apiFetchJson("/api/live/courses");
+  state.courses = Array.isArray(payload.items) ? payload.items : [];
+  state.isLoggedIn = true;
+  state.view = "courses";
+  state.assignmentMetrics = {};
+  state.assignments = [];
+  state.selectedCourseId = state.courses[0]?.courseId ?? "";
+  state.selectedAssignmentId = "";
+  window.sessionStorage.removeItem(manualLogoutStorageKey);
+  if (state.courses.length === 0) {
+    setEmptyState({
+      title: "表示できるコースがありません",
+      shortSummary: "Google Classroom から対象コースを取得できませんでした。",
+      recommendedAction: "コースの教師権限と公開状態を確認してください。",
+      view: "courses",
     });
+    render();
     return;
   }
+  await loadCourseContext(state.selectedCourseId, { nextView: "dashboard" });
+}
 
-  setLoading("Google Classroom のコース一覧を取得しています。");
-  try {
-    const payload = await apiFetchJson("/api/live/courses");
-    state.courses = Array.isArray(payload.items) ? payload.items : [];
-    state.isLoggedIn = true;
-    state.view = "courses";
-    state.assignmentMetrics = {};
-    state.assignments = [];
-    state.selectedCourseId = state.courses[0]?.courseId ?? "";
-    state.selectedAssignmentId = "";
-    if (state.courses.length === 0) {
-      setEmptyState({
-        title: "表示できるコースがありません",
-        shortSummary: "Google Classroom から対象コースを取得できませんでした。",
-        recommendedAction: "コースの教師権限と公開状態を確認してください。",
-        view: "courses",
+async function connectGoogle({ skipAuthorizationCheck = false } = {}) {
+  if (!skipAuthorizationCheck) {
+    try {
+      await ensureGoogleAuthorization("read");
+    } catch (error) {
+      if (error?.cancelled) {
+        state.scenario = scenarioModes.ready;
+        clearLoading();
+        render();
+        return;
+      }
+      handleRequestFailure(error, {
+        title: "Google Classroom への接続に失敗しました",
+        recommendedAction:
+          "OAuth の認可画面を開いて、Google Classroom の読み取り権限を許可してください。",
+        loggedOut: true,
+        view: "login",
       });
-      render();
       return;
     }
-    await loadCourseContext(state.selectedCourseId, { nextView: "dashboard" });
+  }
+
+  try {
+    await loadCoursesAfterAuthorization();
   } catch (error) {
     handleRequestFailure(error, {
       title: "コース一覧の取得に失敗しました",
@@ -1353,6 +1369,31 @@ async function connectGoogle() {
       loggedOut: true,
       view: "login",
     });
+  }
+}
+
+async function bootstrapGoogleSession() {
+  if (window.sessionStorage.getItem(manualLogoutStorageKey) === "1") {
+    return;
+  }
+
+  state.scenario = scenarioModes.loading;
+  state.loadingMessage = "保存済みの Google Classroom セッションを確認しています。";
+  render();
+
+  try {
+    const payload = await apiFetchJson("/api/live/oauth/check?intent=read");
+    if (payload.status !== "authorized") {
+      state.scenario = scenarioModes.ready;
+      clearLoading();
+      render();
+      return;
+    }
+    await connectGoogle({ skipAuthorizationCheck: true });
+  } catch (_error) {
+    state.scenario = scenarioModes.ready;
+    clearLoading();
+    render();
   }
 }
 
@@ -1574,6 +1615,7 @@ function bindEvents() {
 
   document.querySelectorAll("[data-action='logout']").forEach((button) => {
     button.addEventListener("click", () => {
+      window.sessionStorage.setItem(manualLogoutStorageKey, "1");
       state.isLoggedIn = false;
       state.view = "login";
       state.scenario = scenarioModes.ready;

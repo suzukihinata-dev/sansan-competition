@@ -230,6 +230,32 @@ class LiveApiTests(unittest.TestCase):
         self.assertEqual(payload["status"], "authorized")
         self.assertEqual(payload["intent"], "read")
 
+    def test_oauth_check_reports_authorized_when_cached_token_is_ready(self) -> None:
+        with patch.object(
+            app_main,
+            "load_google_user_credentials",
+            return_value=object(),
+        ):
+            status_code, payload = self._request_json("/api/live/oauth/check?intent=read")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["status"], "authorized")
+        self.assertEqual(payload["intent"], "read")
+
+    def test_oauth_check_reports_authorization_required_without_creating_session(self) -> None:
+        with patch.object(
+            app_main,
+            "load_google_user_credentials",
+            side_effect=app_main.GoogleOAuthAuthorizationRequiredError("required"),
+        ):
+            status_code, payload = self._request_json("/api/live/oauth/check?intent=read")
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["status"], "authorization_required")
+        self.assertEqual(payload["intent"], "read")
+        with app_main.OAUTH_SESSIONS_LOCK:
+            self.assertEqual(app_main.OAUTH_SESSIONS, {})
+
     def test_oauth_start_returns_authorization_url_when_grant_is_required(self) -> None:
         auth_request = types.SimpleNamespace(
             authorization_url="https://accounts.example.test/auth",
