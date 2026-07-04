@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 CLASSROOM_COURSES_READONLY_SCOPE = "https://www.googleapis.com/auth/classroom.courses.readonly"
 CLASSROOM_COURSEWORK_STUDENTS_READONLY_SCOPE = (
@@ -179,7 +180,11 @@ def complete_google_oauth_authorization(
     flow.redirect_uri = redirect_uri
     if code_verifier is not None:
         flow.code_verifier = code_verifier
-    flow.fetch_token(authorization_response=authorization_response)
+    flow.fetch_token(
+        authorization_response=_coerce_loopback_authorization_response_to_https(
+            authorization_response
+        )
+    )
     creds = flow.credentials
     resolved_config.token_path.write_text(creds.to_json(), encoding="utf-8")
     return creds
@@ -248,6 +253,24 @@ def _scopes_cover_requested_scopes(
     granted = {str(scope).strip() for scope in granted_scopes if str(scope).strip()}
     requested = {str(scope).strip() for scope in requested_scopes if str(scope).strip()}
     return all(any(candidate in granted for candidate in _scope_equivalents(scope)) for scope in requested)
+
+
+def _coerce_loopback_authorization_response_to_https(
+    authorization_response: str,
+) -> str:
+    parsed = urlsplit(authorization_response)
+    if parsed.scheme != "http":
+        return authorization_response
+    if parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        return authorization_response
+    secure_parts = SplitResult(
+        scheme="https",
+        netloc=parsed.netloc,
+        path=parsed.path,
+        query=parsed.query,
+        fragment=parsed.fragment,
+    )
+    return urlunsplit(secure_parts)
 
 
 def _scope_equivalents(scope: str) -> tuple[str, ...]:

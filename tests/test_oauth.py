@@ -383,12 +383,49 @@ class OAuthTests(unittest.TestCase):
         )
         self.assertEqual(
             fake_flow.fetch_token_calls,
-            ["http://127.0.0.1:8000/oauth/google/callback?state=state-123&code=abc"],
+            ["https://127.0.0.1:8000/oauth/google/callback?state=state-123&code=abc"],
         )
         self.assertEqual(fake_flow.code_verifier, "verifier-123")
         self.assertEqual(
             json.loads(self.token_path.read_text(encoding="utf-8"))["token"],
             "new",
+        )
+
+    def test_complete_google_oauth_authorization_coerces_loopback_response_to_https(self) -> None:
+        cached_creds = FakeCreds(
+            valid=True,
+            scopes=("scope.a",),
+            has_scopes_result=True,
+        )
+        refreshed_creds = FakeCreds(
+            valid=True,
+            scopes=("scope.a", "scope.b"),
+            has_scopes_result=True,
+            token_json='{"token":"new","scopes":["scope.a","scope.b"]}',
+        )
+        modules_patch, fake_flow, _ = self._patch_google_modules(
+            cached_creds=cached_creds,
+            refreshed_creds=refreshed_creds,
+        )
+
+        with modules_patch:
+            complete_google_oauth_authorization(
+                ("scope.a", "scope.b"),
+                state="state-123",
+                authorization_response=(
+                    "http://127.0.0.1:8000/?state=state-123&code=abc"
+                ),
+                redirect_uri="http://localhost:8000",
+                code_verifier="verifier-123",
+                config=GoogleOAuthConfig(
+                    credentials_path=self.credentials_path,
+                    token_path=self.token_path,
+                ),
+            )
+
+        self.assertEqual(
+            fake_flow.fetch_token_calls,
+            ["https://127.0.0.1:8000/?state=state-123&code=abc"],
         )
 
     def test_refresh_preserves_cached_scope_union(self) -> None:
