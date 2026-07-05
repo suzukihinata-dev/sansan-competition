@@ -78,6 +78,7 @@ OAuth consent screen の Audience が `External` かつ Publishing status が `T
 
 - [docs/google-classroom-cli-oauth-setup.md](docs/google-classroom-cli-oauth-setup.md)
 - [docs/google_api_setup.md](docs/google_api_setup.md)
+- [docs/ngrok-local-oauth-setup.md](docs/ngrok-local-oauth-setup.md)
 - [docs/firebase-hosting-cloud-run-setup.md](docs/firebase-hosting-cloud-run-setup.md)
 
 ## GUI の起動と動作
@@ -122,6 +123,44 @@ OAuth consent screen の Audience が `External` かつ Publishing status が `T
 - Google 認可を完了するブラウザは、別端末ではなくサーバ端末側です
 - 一度 token が作成されれば、その後は同じサーバを見ている別端末 GUI から利用できます
 - 別端末ブラウザ自身で Google 認可まで完了したい場合は、ローカルのみではなく HTTPS ドメイン付きの `Web application` client が必要です
+
+## ngrok で無料 HTTPS 化
+
+別端末ブラウザ自身で Google 認可まで完了したいなら、無料枠では ngrok が現実的です。
+
+前提:
+
+- `brew install ngrok`
+- ngrok の無料アカウント
+- `authtoken`
+
+起動:
+
+```bash
+cd /Users/kimura/Desktop/SP活動/2年/後期/sansan-competition
+export NGROK_AUTHTOKEN='YOUR_NGROK_AUTHTOKEN'
+./scripts/start_gui_with_ngrok.sh
+```
+
+固定の dev domain を明示したい場合だけ、追加で次を設定してください。
+
+```bash
+export NGROK_DOMAIN='YOUR_ASSIGNED_NAME.ngrok-free.dev'
+```
+
+このスクリプトは:
+
+- `uv run python main.py --host 127.0.0.1 --port 8000` を起動する
+- ngrok の公開 URL を自動で張る
+- Google Cloud に登録すべき redirect URI を表示する
+
+Google Cloud 側では `Web application` OAuth client の Authorized redirect URI に、スクリプトが表示した次の URI を追加してください。
+
+```text
+https://<ngrok が表示した公開URL>/oauth/google/callback
+```
+
+保存後は OAuth client JSON を再ダウンロードし、ログイン画面から登録してください。
 
 ## Firebase / Cloud Run 配備
 
