@@ -484,8 +484,6 @@ def _resolve_runtime_google_oauth_config(
     config: GoogleOAuthConfig | None = None,
 ) -> GoogleOAuthConfig:
     resolved_config = config or GoogleOAuthConfig()
-    if config is not None:
-        return resolved_config
     if _load_google_oauth_payload_from_env() is not None:
         return resolved_config
     if os.environ.get(GOOGLE_OAUTH_CLIENT_FILE_ENV, "").strip():
@@ -500,7 +498,11 @@ def _resolve_runtime_google_oauth_config(
         return resolved_config
 
     if _is_loopback_redirect_uri(redirect_uri) and LEGACY_GOOGLE_OAUTH_CLIENT_PATH.exists():
-        legacy_config = GoogleOAuthConfig(credentials_path=LEGACY_GOOGLE_OAUTH_CLIENT_PATH)
+        legacy_config = GoogleOAuthConfig(
+            credentials_path=LEGACY_GOOGLE_OAUTH_CLIENT_PATH,
+            token_path=resolved_config.token_path,
+            local_server_port=resolved_config.local_server_port,
+        )
         legacy_info = inspect_google_oauth_client(legacy_config)
         if _oauth_client_info_supports_runtime(
             legacy_info,

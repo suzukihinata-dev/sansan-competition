@@ -532,6 +532,9 @@ function renderOAuthSetupPanel() {
       : setup.remoteBrowserSession
         ? "別端末ブラウザ自身で Google 認可を完了したい場合は、HTTPS ドメイン付きの Web application クライアントが必要です。"
         : "同一端末から使う場合は installed / desktop app クライアントも利用できます。";
+  const browserScopeNote = setup.browserSessionScoped
+    ? "Google アカウントの接続状態は、このブラウザごとに分かれて保存されます。"
+    : "";
   const authorizationHint = setup.authorizationHint
     ? `<p class="subtle" style="margin: 0 0 10px;">${escapeHtml(setup.authorizationHint)}</p>`
     : "";
@@ -542,6 +545,11 @@ function renderOAuthSetupPanel() {
         <h2 style="margin: 0 0 8px;">OAuth 設定</h2>
         <p class="subtle" style="margin: 0 0 10px;">${escapeHtml(currentClient)}</p>
         <p class="subtle" style="margin: 0 0 10px;">${escapeHtml(remoteNote)}</p>
+        ${
+          browserScopeNote
+            ? `<p class="subtle" style="margin: 0 0 10px;">${escapeHtml(browserScopeNote)}</p>`
+            : ""
+        }
         ${authorizationHint}
         <p class="subtle" style="margin: 0 0 14px;">登録すべき redirect URI: ${escapeHtml(setup.redirectUri || "未取得")}</p>
       </div>
@@ -1307,6 +1315,7 @@ function normalizeOAuthSetup(payload) {
     redirectUri: String(payload?.redirectUri ?? ""),
     serverBaseUrl: String(payload?.serverBaseUrl ?? ""),
     remoteBrowserSession: Boolean(payload?.remoteBrowserSession),
+    browserSessionScoped: Boolean(payload?.browserSessionScoped),
     authorizationMode: String(payload?.authorizationMode ?? ""),
     authorizationHint: String(payload?.authorizationHint ?? ""),
     recommendedAction: String(payload?.recommendedAction ?? ""),
@@ -1360,6 +1369,31 @@ async function uploadOAuthClientFile(file) {
     };
     render();
   }
+}
+
+async function logoutGoogle() {
+  try {
+    await apiFetchJson("/api/live/oauth/logout", {
+      method: "POST",
+    });
+  } catch (_error) {
+    // ローカル状態のリセットは続行する。
+  }
+
+  window.sessionStorage.setItem(manualLogoutStorageKey, "1");
+  state.isLoggedIn = false;
+  state.view = "login";
+  state.scenario = scenarioModes.ready;
+  state.loadingMessage = "";
+  state.courses = [];
+  state.assignments = [];
+  state.assignmentMetrics = {};
+  state.selectedCourseId = "";
+  state.selectedAssignmentId = "";
+  state.agentOutput = normalizeAgentOutput(buildPlaceholderOutput());
+  resetEditableValues();
+  await refreshOAuthSetup();
+  render();
 }
 
 function resetOAuthDialog() {
@@ -1817,19 +1851,7 @@ function bindEvents() {
 
   document.querySelectorAll("[data-action='logout']").forEach((button) => {
     button.addEventListener("click", () => {
-      window.sessionStorage.setItem(manualLogoutStorageKey, "1");
-      state.isLoggedIn = false;
-      state.view = "login";
-      state.scenario = scenarioModes.ready;
-      state.loadingMessage = "";
-      state.courses = [];
-      state.assignments = [];
-      state.assignmentMetrics = {};
-      state.selectedCourseId = "";
-      state.selectedAssignmentId = "";
-      state.agentOutput = normalizeAgentOutput(buildPlaceholderOutput());
-      resetEditableValues();
-      render();
+      void logoutGoogle();
     });
   });
 

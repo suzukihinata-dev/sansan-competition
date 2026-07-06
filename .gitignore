@@ -14,6 +14,7 @@ output/
 
 # Google OAuth 認証情報 (絶対にコミットしない)
 client_secret.json
+client_secret_*.json
 token.json
 
 # Firebase / Cloud Run local artifacts

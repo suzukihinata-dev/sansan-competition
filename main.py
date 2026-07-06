@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import html
 import http.server
+from http.cookies import SimpleCookie
 import json
+import re
 import socketserver
 import threading
 import time
@@ -58,6 +60,10 @@ PUBLIC_DIR = ROOT / "public"
 OAUTH_CALLBACK_PATH = "/oauth/google/callback"
 OAUTH_SESSION_TTL_SECONDS = 10 * 60
 OAUTH_LOCAL_BROWSER_TIMEOUT_SECONDS = 5 * 60
+OAUTH_BROWSER_SESSION_COOKIE_NAME = "sansan_browser_session"
+OAUTH_BROWSER_SESSION_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
+OAUTH_BROWSER_SESSION_TOKEN_DIRNAME = "browser-session-tokens"
+OAUTH_BROWSER_SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 OAUTH_INTENT_SCOPES = {
     "read": default_classroom_read_scopes(),
     "post": default_classroom_post_scopes(),
@@ -69,6 +75,38 @@ OAUTH_SESSIONS_LOCK = threading.Lock()
 class ReusableTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
     daemon_threads = True
+
+
+def build_browser_session_token_path(
+    session_id: str,
+    *,
+    base_config: GoogleOAuthConfig | None = None,
+) -> Path:
+    resolved_config = base_config or GoogleOAuthConfig()
+    base_token_path = resolved_config.token_path
+    suffix = base_token_path.suffix or ".json"
+    return (
+        base_token_path.parent
+        / OAUTH_BROWSER_SESSION_TOKEN_DIRNAME
+        / f"{base_token_path.stem}-{session_id}{suffix}"
+    )
+
+
+def clear_browser_session_oauth_tokens(
+    *,
+    base_config: GoogleOAuthConfig | None = None,
+) -> None:
+    resolved_config = base_config or GoogleOAuthConfig()
+    clear_google_oauth_token(path=resolved_config.token_path)
+
+    session_dir = resolved_config.token_path.parent / OAUTH_BROWSER_SESSION_TOKEN_DIRNAME
+    suffix = resolved_config.token_path.suffix or ".json"
+    pattern = f"{resolved_config.token_path.stem}-*{suffix}"
+    for token_path in session_dir.glob(pattern):
+        try:
+            token_path.unlink()
+        except FileNotFoundError:
+            continue
 
 
 def build_sample_analysis():
@@ -500,6 +538,8 @@ def start_local_browser_oauth_session(
 
 class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args: object, **kwargs: object) -> None:
+        self._browser_session_id_cache: str | None = None
+        self._browser_session_cookie_header: str | None = None
         super().__init__(*args, directory=str(PUBLIC_DIR), **kwargs)
 
     def do_GET(self) -> None:
@@ -541,6 +581,9 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
         if parsed.path == "/api/live/oauth/config":
             self._handle_oauth_config_upload()
             return
+        if parsed.path == "/api/live/oauth/logout":
+            self._handle_oauth_logout()
+            return
         if parsed.path == "/api/live/post-reminder":
             self._handle_post_reminder()
             return
@@ -549,7 +592,10 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
     def _handle_courses(self) -> None:
         request_id = build_live_request_id("courses")
         try:
-            client = GoogleClassroomClient.from_oauth(allow_interactive=False)
+            client = GoogleClassroomClient.from_oauth(
+                oauth_config=self._browser_oauth_config(),
+                allow_interactive=False,
+            )
             payload = build_course_list_payload(
                 normalize_live_courses(client.list_courses(course_states=["ACTIVE"]))
             )
@@ -577,7 +623,10 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         try:
-            client = GoogleClassroomClient.from_oauth(allow_interactive=False)
+            client = GoogleClassroomClient.from_oauth(
+                oauth_config=self._browser_oauth_config(),
+                allow_interactive=False,
+            )
             payload = build_coursework_list_payload(
                 normalize_live_coursework(
                     client.list_coursework(
@@ -611,7 +660,10 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         try:
-            client = GoogleClassroomClient.from_oauth(allow_interactive=False)
+            client = GoogleClassroomClient.from_oauth(
+                oauth_config=self._browser_oauth_config(),
+                allow_interactive=False,
+            )
             analysis = fetch_submission_analysis(
                 client,
                 course_id=course_id,
@@ -647,7 +699,10 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         try:
-            client = GoogleClassroomClient.from_oauth(allow_interactive=False)
+            client = GoogleClassroomClient.from_oauth(
+                oauth_config=self._browser_oauth_config(),
+                allow_interactive=False,
+            )
             analysis = fetch_submission_analysis(
                 client,
                 course_id=course_id,
@@ -702,7 +757,10 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
                     recoverable=False,
                 )
 
-            client = build_post_only_client(allow_interactive=False)
+            client = build_post_only_client(
+                oauth_config=self._browser_oauth_config(),
+                allow_interactive=False,
+            )
             announcement = client.create_announcement_from_output(reminder_output)
             self._send_json(
                 200,
@@ -728,7 +786,8 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
 
     def _build_oauth_config_payload(self, *, request_id: str) -> dict[str, Any]:
         redirect_uri = self._oauth_redirect_uri()
-        client_info = inspect_google_oauth_client()
+        oauth_config = self._browser_oauth_config()
+        client_info = inspect_google_oauth_client(oauth_config)
         ready_for_oauth = False
         status = "configuration_required"
         recommended_action = ""
@@ -739,6 +798,7 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
             plan = resolve_google_oauth_runtime_plan(
                 redirect_uri,
                 remote_browser_session=not self._is_loopback_request_host(),
+                config=oauth_config,
             )
         except FileNotFoundError:
             recommended_action = (
@@ -763,6 +823,7 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
             "clientType": client_info.client_type,
             "clientId": client_info.client_id,
             "authorizedRedirectUris": list(client_info.redirect_uris),
+            "browserSessionScoped": True,
             "redirectUri": redirect_uri,
             "serverBaseUrl": self._server_base_url(),
             "remoteBrowserSession": not self._is_loopback_request_host(),
@@ -787,7 +848,7 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
                     recoverable=False,
                 )
             save_google_oauth_client_file(content)
-            clear_google_oauth_token()
+            clear_browser_session_oauth_tokens()
             self._send_json(200, self._build_oauth_config_payload(request_id=request_id))
         except Exception as exc:
             error = resolve_agent_error(
@@ -828,9 +889,11 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         try:
+            oauth_config = self._browser_oauth_config()
             plan = resolve_google_oauth_runtime_plan(
                 self._oauth_redirect_uri(),
                 remote_browser_session=not self._is_loopback_request_host(),
+                config=oauth_config,
             )
             load_google_user_credentials(scopes, config=plan.config, allow_interactive=False)
             self._send_json(
@@ -896,9 +959,11 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         try:
+            oauth_config = self._browser_oauth_config()
             plan = resolve_google_oauth_runtime_plan(
                 self._oauth_redirect_uri(),
                 remote_browser_session=not self._is_loopback_request_host(),
+                config=oauth_config,
             )
             load_google_user_credentials(scopes, config=plan.config, allow_interactive=False)
             self._send_json(
@@ -925,6 +990,7 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
                         "status": "pending",
                         "authorizationMode": plan.authorization_mode,
                         "authorizationHint": plan.authorization_hint,
+                        "browserSessionId": self._browser_session_id(),
                         "credentialsPath": str(plan.config.credentials_path or ""),
                         "tokenPath": str(plan.config.token_path or ""),
                     }
@@ -964,6 +1030,7 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
                     "status": "pending",
                     "authorizationMode": plan.authorization_mode,
                     "authorizationHint": plan.authorization_hint,
+                    "browserSessionId": self._browser_session_id(),
                     "credentialsPath": str(plan.config.credentials_path or ""),
                     "tokenPath": str(plan.config.token_path or ""),
                 }
@@ -1005,7 +1072,7 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
         with OAUTH_SESSIONS_LOCK:
             session = dict(OAUTH_SESSIONS.get(state, {}))
 
-        if not session:
+        if not session or not self._oauth_session_matches_browser(session):
             self._send_json(
                 404,
                 {
@@ -1043,7 +1110,7 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
         with OAUTH_SESSIONS_LOCK:
             session = dict(OAUTH_SESSIONS.get(state, {}))
 
-        if not session:
+        if not session or not self._oauth_session_matches_browser(session):
             self._send_oauth_callback_page(
                 title="OAuth セッションが見つかりませんでした",
                 message="時間をおいて再度接続を開始してください。",
@@ -1127,6 +1194,30 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
             success=True,
         )
 
+    def _handle_oauth_logout(self) -> None:
+        request_id = build_live_request_id("oauth_logout")
+        current_session_id = self._browser_session_id(create_if_missing=False)
+        if current_session_id:
+            clear_google_oauth_token(path=self._browser_oauth_config(current_session_id).token_path)
+            with OAUTH_SESSIONS_LOCK:
+                expired_states = [
+                    state
+                    for state, session in OAUTH_SESSIONS.items()
+                    if str(session.get("browserSessionId") or "") == current_session_id
+                ]
+                for state in expired_states:
+                    OAUTH_SESSIONS.pop(state, None)
+
+        self._rotate_browser_session_id()
+        self._send_json(
+            200,
+            {
+                "requestId": request_id,
+                "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                "status": "logged_out",
+            },
+        )
+
     def _update_oauth_session_error(self, state: str, error: AgentError) -> None:
         with OAUTH_SESSIONS_LOCK:
             if state in OAUTH_SESSIONS:
@@ -1173,19 +1264,103 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
 
     def _send_json(self, status_code: int, payload: dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self._browser_session_id()
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self._send_browser_session_cookie_header()
         self.end_headers()
         self.wfile.write(body)
 
     def _send_html(self, status_code: int, body: str) -> None:
         encoded = body.encode("utf-8")
+        self._browser_session_id()
         self.send_response(status_code)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(encoded)))
+        self._send_browser_session_cookie_header()
         self.end_headers()
         self.wfile.write(encoded)
+
+    def _browser_oauth_config(self, session_id: str | None = None) -> GoogleOAuthConfig:
+        base_config = GoogleOAuthConfig()
+        resolved_session_id = session_id or self._browser_session_id()
+        return GoogleOAuthConfig(
+            credentials_path=base_config.credentials_path,
+            token_path=build_browser_session_token_path(
+                resolved_session_id,
+                base_config=base_config,
+            ),
+            local_server_port=base_config.local_server_port,
+        )
+
+    def _browser_session_id(self, *, create_if_missing: bool = True) -> str | None:
+        if self._browser_session_id_cache:
+            return self._browser_session_id_cache
+
+        parsed_session_id = self._parse_browser_session_id()
+        if parsed_session_id:
+            self._browser_session_id_cache = parsed_session_id
+            return parsed_session_id
+
+        if not create_if_missing:
+            return None
+
+        self._browser_session_id_cache = uuid.uuid4().hex
+        self._browser_session_cookie_header = self._build_browser_session_cookie_header(
+            self._browser_session_id_cache
+        )
+        return self._browser_session_id_cache
+
+    def _rotate_browser_session_id(self) -> str:
+        self._browser_session_id_cache = uuid.uuid4().hex
+        self._browser_session_cookie_header = self._build_browser_session_cookie_header(
+            self._browser_session_id_cache
+        )
+        return self._browser_session_id_cache
+
+    def _parse_browser_session_id(self) -> str | None:
+        raw_cookie = self.headers.get("Cookie") or ""
+        if not raw_cookie.strip():
+            return None
+
+        cookie = SimpleCookie()
+        try:
+            cookie.load(raw_cookie)
+        except Exception:
+            return None
+
+        morsel = cookie.get(OAUTH_BROWSER_SESSION_COOKIE_NAME)
+        if morsel is None:
+            return None
+
+        value = morsel.value.strip()
+        if not OAUTH_BROWSER_SESSION_ID_PATTERN.fullmatch(value):
+            return None
+        return value
+
+    def _build_browser_session_cookie_header(self, session_id: str) -> str:
+        parts = [
+            f"{OAUTH_BROWSER_SESSION_COOKIE_NAME}={session_id}",
+            "Path=/",
+            "HttpOnly",
+            "SameSite=Lax",
+            f"Max-Age={OAUTH_BROWSER_SESSION_COOKIE_MAX_AGE_SECONDS}",
+        ]
+        if urlparse(self._server_base_url()).scheme == "https":
+            parts.append("Secure")
+        return "; ".join(parts)
+
+    def _send_browser_session_cookie_header(self) -> None:
+        if self._browser_session_cookie_header:
+            self.send_header("Set-Cookie", self._browser_session_cookie_header)
+            self._browser_session_cookie_header = None
+
+    def _oauth_session_matches_browser(self, session: dict[str, Any]) -> bool:
+        expected_session_id = str(session.get("browserSessionId") or "").strip()
+        if not expected_session_id:
+            return True
+        return expected_session_id == (self._browser_session_id(create_if_missing=False) or "")
 
     def _send_oauth_callback_page(
         self,

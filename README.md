@@ -106,6 +106,12 @@ OAuth consent screen の Audience が `External` かつ Publishing status が `T
 5. 提出状況分析やリマインド案を確認する
 6. 承認後に Classroom 投稿を実行する
 
+補足:
+
+- GUI の Google OAuth token はブラウザごとに分離されます
+- 同じサーバでも、別ブラウザや別端末はそれぞれ別の Google アカウントで接続できます
+- 同じブラウザで別アカウントへ切り替えたい場合は `ログアウト` を実行してから再接続してください
+
 ## ローカル LAN 運用
 
 課金なしで使う前提なら、この運用が現実的です。
@@ -122,6 +128,7 @@ OAuth consent screen の Audience が `External` かつ Publishing status が `T
 
 - Google 認可を完了するブラウザは、別端末ではなくサーバ端末側です
 - 一度 token が作成されれば、その後は同じサーバを見ている別端末 GUI から利用できます
+- この構成では、Google アカウントはブラウザごとには分かれません。サーバ端末のブラウザで許可したアカウントを共有して使う形です
 - 別端末ブラウザ自身で Google 認可まで完了したい場合は、ローカルのみではなく HTTPS ドメイン付きの `Web application` client が必要です
 
 ## ngrok で無料 HTTPS 化
@@ -153,6 +160,7 @@ export NGROK_DOMAIN='YOUR_ASSIGNED_NAME.ngrok-free.dev'
 - `uv run python main.py --host 127.0.0.1 --port 8000` を起動する
 - ngrok の公開 URL を自動で張る
 - Google Cloud に登録すべき redirect URI を表示する
+- ブラウザごとに別の Google OAuth token を保存する
 
 Google Cloud 側では `Web application` OAuth client の Authorized redirect URI に、スクリプトが表示した次の URI を追加してください。
 

@@ -94,8 +94,11 @@ ngrok_pid=$!
 
 public_url=""
 for _ in $(seq 1 50); do
+  if ! kill -0 "${ngrok_pid}" 2>/dev/null; then
+    break
+  fi
   public_url="$(
-    curl -fsS "${NGROK_LOCAL_API}" 2>/dev/null | python3 - <<'PY'
+    { curl -fsS "${NGROK_LOCAL_API}" 2>/dev/null || true; } | python3 -c '
 import json
 import sys
 
@@ -112,7 +115,7 @@ for tunnel in payload.get("tunnels", []):
         raise SystemExit(0)
 
 print("")
-PY
+'
   )"
   if [[ -n "${public_url}" ]]; then
     break

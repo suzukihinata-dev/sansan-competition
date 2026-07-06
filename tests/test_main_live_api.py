@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from http.cookies import SimpleCookie
 import json
 import os
 import threading
@@ -104,7 +105,8 @@ class LiveApiTests(unittest.TestCase):
         method: str = "GET",
         payload: dict | None = None,
         headers: dict | None = None,
-    ) -> tuple[int, dict]:
+        return_headers: bool = False,
+    ) -> tuple[int, dict] | tuple[int, dict, dict[str, str]]:
         body = None
         request_headers = dict(headers or {})
         if payload is not None:
@@ -124,12 +126,27 @@ class LiveApiTests(unittest.TestCase):
         except error.HTTPError as exc:
             status_code = exc.code
             response_body = exc.read()
+            response_headers = dict(exc.headers.items())
             exc.close()
+        else:
+            response_headers = dict(response.headers.items())
 
-        return status_code, json.loads(response_body.decode("utf-8"))
+        payload_dict = json.loads(response_body.decode("utf-8"))
+        if return_headers:
+            return status_code, payload_dict, response_headers
+        return status_code, payload_dict
 
-    def _request_raw(self, path: str) -> tuple[int, str]:
-        req = request.Request(f"{self.base_url}{path}", method="GET")
+    def _request_raw(
+        self,
+        path: str,
+        *,
+        headers: dict | None = None,
+    ) -> tuple[int, str]:
+        req = request.Request(
+            f"{self.base_url}{path}",
+            headers=dict(headers or {}),
+            method="GET",
+        )
         try:
             with request.urlopen(req) as response:
                 status_code = response.status
@@ -140,6 +157,9 @@ class LiveApiTests(unittest.TestCase):
             exc.close()
 
         return status_code, response_body
+
+    def _session_cookie_header(self, value: str) -> dict[str, str]:
+        return {"Cookie": f"{app_main.OAUTH_BROWSER_SESSION_COOKIE_NAME}={value}"}
 
     def test_courses_endpoint_returns_normalized_items(self) -> None:
         fake_client = FakeCourseClient(
@@ -292,19 +312,38 @@ class LiveApiTests(unittest.TestCase):
         with app_main.OAUTH_SESSIONS_LOCK:
             self.assertEqual(app_main.OAUTH_SESSIONS, {})
 
+    def test_oauth_config_sets_browser_session_cookie(self) -> None:
+        status_code, payload, headers = self._request_json(
+            "/api/live/oauth/config",
+            return_headers=True,
+        )
+
+        self.assertEqual(status_code, 200)
+        self.assertIn("Set-Cookie", headers)
+        cookie = SimpleCookie()
+        cookie.load(headers["Set-Cookie"])
+        self.assertIn(app_main.OAUTH_BROWSER_SESSION_COOKIE_NAME, cookie)
+        self.assertEqual(payload["browserSessionScoped"], True)
+
     def test_oauth_start_returns_authorization_url_when_grant_is_required(self) -> None:
+        browser_session_id = "browser-session-123456"
         auth_request = types.SimpleNamespace(
             authorization_url="https://accounts.example.test/auth",
             state="oauth-state-123",
             scopes=app_main.OAUTH_INTENT_SCOPES["read"],
             code_verifier="verifier-123",
         )
+        direct_plan_factory = lambda _redirect_uri, *, remote_browser_session, config=None: types.SimpleNamespace(
+            config=config,
+            authorization_mode="direct_redirect",
+            authorization_hint="Google の認可画面をこのブラウザで開きます。",
+        )
 
         with (
             patch.object(
                 app_main,
                 "resolve_google_oauth_runtime_plan",
-                return_value=self.direct_oauth_plan,
+                side_effect=direct_plan_factory,
             ),
             patch.object(
                 app_main,
@@ -317,7 +356,10 @@ class LiveApiTests(unittest.TestCase):
                 return_value=auth_request,
             ),
         ):
-            status_code, payload = self._request_json("/api/live/oauth/start?intent=read")
+            status_code, payload = self._request_json(
+                "/api/live/oauth/start?intent=read",
+                headers=self._session_cookie_header(browser_session_id),
+            )
 
         self.assertEqual(status_code, 200)
         self.assertEqual(payload["status"], "authorization_required")
@@ -342,6 +384,19 @@ class LiveApiTests(unittest.TestCase):
             self.assertEqual(
                 app_main.OAUTH_SESSIONS["oauth-state-123"]["codeVerifier"],
                 "verifier-123",
+            )
+            self.assertEqual(
+                app_main.OAUTH_SESSIONS["oauth-state-123"]["browserSessionId"],
+                browser_session_id,
+            )
+            self.assertEqual(
+                app_main.OAUTH_SESSIONS["oauth-state-123"]["tokenPath"],
+                str(
+                    app_main.build_browser_session_token_path(
+                        browser_session_id,
+                        base_config=app_main.GoogleOAuthConfig(),
+                    )
+                ),
             )
 
     def test_oauth_config_reports_missing_client_file(self) -> None:
@@ -540,6 +595,7 @@ class LiveApiTests(unittest.TestCase):
             )
 
     def test_oauth_start_uses_local_browser_assist_for_remote_installed_client(self) -> None:
+        browser_session_id = "browser-session-654321"
         local_browser_plan = types.SimpleNamespace(
             config=self.oauth_config,
             authorization_mode="local_browser_assisted",
@@ -562,7 +618,10 @@ class LiveApiTests(unittest.TestCase):
         ) as start_local_browser:
             status_code, payload = self._request_json(
                 "/api/live/oauth/start?intent=read",
-                headers={"Host": "192.168.1.20:8000"},
+                headers={
+                    "Host": "192.168.1.20:8000",
+                    **self._session_cookie_header(browser_session_id),
+                },
             )
 
         self.assertEqual(status_code, 200)
@@ -577,11 +636,13 @@ class LiveApiTests(unittest.TestCase):
             self.assertEqual(payload["statusUrl"], f"/api/live/oauth/status?state={state}")
             self.assertEqual(session["authorizationMode"], "local_browser_assisted")
             self.assertEqual(session["status"], "pending")
+            self.assertEqual(session["browserSessionId"], browser_session_id)
 
     def test_oauth_status_returns_pending_session(self) -> None:
         with app_main.OAUTH_SESSIONS_LOCK:
             app_main.OAUTH_SESSIONS["oauth-state-123"] = {
                 "createdAt": 9999999999.0,
+                "browserSessionId": "browser-session-123456",
                 "intent": "read",
                 "redirectUri": "http://127.0.0.1:8000/oauth/google/callback",
                 "scopes": app_main.OAUTH_INTENT_SCOPES["read"],
@@ -589,17 +650,39 @@ class LiveApiTests(unittest.TestCase):
             }
 
         status_code, payload = self._request_json(
-            "/api/live/oauth/status?state=oauth-state-123"
+            "/api/live/oauth/status?state=oauth-state-123",
+            headers=self._session_cookie_header("browser-session-123456"),
         )
 
         self.assertEqual(status_code, 200)
         self.assertEqual(payload["status"], "pending")
         self.assertEqual(payload["intent"], "read")
 
+    def test_oauth_status_rejects_other_browser_session(self) -> None:
+        with app_main.OAUTH_SESSIONS_LOCK:
+            app_main.OAUTH_SESSIONS["oauth-state-123"] = {
+                "createdAt": 9999999999.0,
+                "browserSessionId": "browser-session-123456",
+                "intent": "read",
+                "redirectUri": "http://127.0.0.1:8000/oauth/google/callback",
+                "scopes": app_main.OAUTH_INTENT_SCOPES["read"],
+                "status": "pending",
+            }
+
+        status_code, payload = self._request_json(
+            "/api/live/oauth/status?state=oauth-state-123",
+            headers=self._session_cookie_header("browser-session-OTHER999"),
+        )
+
+        self.assertEqual(status_code, 404)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"]["code"], "GOOGLE_AUTH_EXPIRED")
+
     def test_oauth_callback_marks_session_completed(self) -> None:
         with app_main.OAUTH_SESSIONS_LOCK:
             app_main.OAUTH_SESSIONS["oauth-state-123"] = {
                 "createdAt": 9999999999.0,
+                "browserSessionId": "browser-session-123456",
                 "intent": "read",
                 "redirectUri": "http://localhost:8000",
                 "scopes": app_main.OAUTH_INTENT_SCOPES["read"],
@@ -613,7 +696,8 @@ class LiveApiTests(unittest.TestCase):
             return_value=object(),
         ) as complete_auth:
             status_code, body = self._request_raw(
-                "/?state=oauth-state-123&code=example"
+                "/?state=oauth-state-123&code=example",
+                headers=self._session_cookie_header("browser-session-123456"),
             )
 
         self.assertEqual(status_code, 200)
@@ -628,6 +712,61 @@ class LiveApiTests(unittest.TestCase):
                 app_main.OAUTH_SESSIONS["oauth-state-123"]["status"],
                 "completed",
             )
+
+    def test_oauth_logout_clears_browser_scoped_token_and_rotates_cookie(self) -> None:
+        browser_session_id = "browser-session-123456"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.dict(
+                os.environ,
+                {
+                    "SANSAN_GOOGLE_OAUTH_CONFIG_DIR": temp_dir,
+                    "SANSAN_GOOGLE_OAUTH_CLIENT_FILE": str(Path(temp_dir) / "credentials.json"),
+                    "SANSAN_GOOGLE_OAUTH_TOKEN_FILE": str(Path(temp_dir) / "token.json"),
+                },
+                clear=False,
+            ):
+                token_path = app_main.build_browser_session_token_path(
+                    browser_session_id,
+                    base_config=app_main.GoogleOAuthConfig(),
+                )
+                token_path.parent.mkdir(parents=True, exist_ok=True)
+                token_path.write_text('{"token":"cached"}', encoding="utf-8")
+                status_code, payload, headers = self._request_json(
+                    "/api/live/oauth/logout",
+                    method="POST",
+                    headers=self._session_cookie_header(browser_session_id),
+                    return_headers=True,
+                )
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["status"], "logged_out")
+        self.assertFalse(token_path.exists())
+        self.assertIn("Set-Cookie", headers)
+        self.assertNotIn(browser_session_id, headers["Set-Cookie"])
+
+    def test_courses_endpoint_uses_browser_scoped_oauth_config(self) -> None:
+        fake_client = FakeCourseClient(courses=[])
+        browser_session_id = "browser-session-123456"
+
+        with patch.object(
+            app_main.GoogleClassroomClient,
+            "from_oauth",
+            return_value=fake_client,
+        ) as from_oauth:
+            status_code, _payload = self._request_json(
+                "/api/live/courses",
+                headers=self._session_cookie_header(browser_session_id),
+            )
+
+        self.assertEqual(status_code, 200)
+        oauth_config = from_oauth.call_args.kwargs["oauth_config"]
+        self.assertEqual(
+            oauth_config.token_path,
+            app_main.build_browser_session_token_path(
+                browser_session_id,
+                base_config=app_main.GoogleOAuthConfig(),
+            ),
+        )
 
     def test_submission_analysis_endpoint_returns_contract_valid_payload(self) -> None:
         with (
