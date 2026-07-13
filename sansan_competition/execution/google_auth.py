@@ -29,6 +29,15 @@ class Scopes:
     ANNOUNCEMENTS = "https://www.googleapis.com/auth/classroom.announcements"
     DOCUMENTS = "https://www.googleapis.com/auth/documents"
     DRIVE_FILE = "https://www.googleapis.com/auth/drive.file"
+    DRIVE_READONLY = "https://www.googleapis.com/auth/drive.readonly"
+    CALENDAR_READONLY = "https://www.googleapis.com/auth/calendar.readonly"
+    TOPICS_READONLY = "https://www.googleapis.com/auth/classroom.topics.readonly"
+    TOPICS = "https://www.googleapis.com/auth/classroom.topics"
+    COURSEWORK_MATERIALS_READONLY = (
+        "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly"
+    )
+    COURSEWORK_MATERIALS = "https://www.googleapis.com/auth/classroom.courseworkmaterials"
+    COURSEWORK_STUDENTS = "https://www.googleapis.com/auth/classroom.coursework.students"
 
 
 READ_SCOPES = (

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sansan-competition.local/schemas/lesson-bundle-v1.0.0.json",
+  "title": "Lesson Bundle",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "lessonId",
+    "course",
+    "calendarEvent",
+    "driveSources",
+    "classroomItems",
+    "topic",
+    "transcript",
+    "publication",
+    "errors"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "lessonId": { "type": "string", "minLength": 1 },
+    "course": {
+      "type": "object",
+      "required": ["courseId", "name"],
+      "properties": {
+        "courseId": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "calendarEvent": { "type": "object" },
+    "driveSources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["sourceId", "title", "kind"],
+        "properties": {
+          "sourceId": { "type": "string", "minLength": 1 },
+          "title": { "type": "string" },
+          "kind": { "enum": ["recording", "transcript", "supplement"] },
+          "mimeType": { "type": "string" },
+          "url": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "classroomItems": { "type": "array" },
+    "topic": {
+      "type": "object",
+      "required": ["name"],
+      "properties": { "name": { "type": "string", "minLength": 1 } },
+      "additionalProperties": true
+    },
+    "transcript": {
+      "type": "object",
+      "required": ["segmentCount", "segments"],
+      "properties": {
+        "segmentCount": { "type": "integer", "minimum": 0 },
+        "segments": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "publication": {
+      "type": "object",
+      "required": ["status", "requiresTeacherApproval"],
+      "properties": {
+        "status": { "enum": ["draft", "partial", "ready"] },
+        "requiresTeacherApproval": { "const": true }
+      },
+      "additionalProperties": true
+    },
+    "errors": { "type": "array" }
+  },
+  "additionalProperties": true
+}

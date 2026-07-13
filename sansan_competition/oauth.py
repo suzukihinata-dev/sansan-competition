@@ -20,7 +20,20 @@ CLASSROOM_STUDENT_SUBMISSIONS_STUDENTS_READONLY_SCOPE = (
 )
 CLASSROOM_ROSTERS_READONLY_SCOPE = "https://www.googleapis.com/auth/classroom.rosters.readonly"
 CLASSROOM_ANNOUNCEMENTS_SCOPE = "https://www.googleapis.com/auth/classroom.announcements"
+CLASSROOM_TOPICS_READONLY_SCOPE = "https://www.googleapis.com/auth/classroom.topics.readonly"
+CLASSROOM_TOPICS_SCOPE = "https://www.googleapis.com/auth/classroom.topics"
+CLASSROOM_COURSEWORK_MATERIALS_READONLY_SCOPE = (
+    "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly"
+)
+CLASSROOM_COURSEWORK_MATERIALS_SCOPE = (
+    "https://www.googleapis.com/auth/classroom.courseworkmaterials"
+)
+CLASSROOM_COURSEWORK_STUDENTS_SCOPE = (
+    "https://www.googleapis.com/auth/classroom.coursework.students"
+)
 DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
+DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+CALENDAR_READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 DOCUMENTS_SCOPE = "https://www.googleapis.com/auth/documents"
 GOOGLE_OAUTH_CONFIG_DIR_ENV = "SANSAN_GOOGLE_OAUTH_CONFIG_DIR"
 GOOGLE_OAUTH_CLIENT_FILE_ENV = "SANSAN_GOOGLE_OAUTH_CLIENT_FILE"
@@ -93,6 +106,28 @@ def default_classroom_read_scopes(*, include_rosters: bool = True) -> tuple[str,
 
 def default_classroom_post_scopes() -> tuple[str, ...]:
     return (CLASSROOM_ANNOUNCEMENTS_SCOPE,)
+
+
+def default_lesson_read_scopes() -> tuple[str, ...]:
+    """Scopes needed to assemble a lesson bundle without writing data."""
+    return (
+        CALENDAR_READONLY_SCOPE,
+        DRIVE_READONLY_SCOPE,
+        CLASSROOM_COURSES_READONLY_SCOPE,
+        CLASSROOM_COURSEWORK_STUDENTS_READONLY_SCOPE,
+        CLASSROOM_COURSEWORK_MATERIALS_READONLY_SCOPE,
+        CLASSROOM_TOPICS_READONLY_SCOPE,
+    )
+
+
+def default_lesson_publish_scopes() -> tuple[str, ...]:
+    """Read scopes plus the teacher-only Classroom publication scopes."""
+    return (
+        *default_lesson_read_scopes(),
+        CLASSROOM_TOPICS_SCOPE,
+        CLASSROOM_COURSEWORK_STUDENTS_SCOPE,
+        CLASSROOM_COURSEWORK_MATERIALS_SCOPE,
+    )
 
 
 def default_google_oauth_config_dir() -> Path:

@@ -151,6 +151,72 @@ class GoogleClassroomClient:
         request = build_classroom_announcement_request(reminder_output)
         return self.create_announcement(request)
 
+    def list_topics(
+        self,
+        course_id: str,
+        *,
+        page_size: int = 100,
+    ) -> list[dict[str, Any]]:
+        return self._collect_paginated(
+            "topic",
+            lambda page_token: self._service.courses()
+            .topics()
+            .list(courseId=course_id, pageSize=page_size, pageToken=page_token)
+            .execute(),
+        )
+
+    def list_coursework_materials(
+        self,
+        course_id: str,
+        *,
+        page_size: int = 100,
+        states: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._collect_paginated(
+            "courseWorkMaterial",
+            lambda page_token: self._service.courses()
+            .courseWorkMaterials()
+            .list(
+                courseId=course_id,
+                pageSize=page_size,
+                pageToken=page_token,
+                courseWorkMaterialStates=states,
+            )
+            .execute(),
+        )
+
+    def create_topic(self, course_id: str, name: str) -> dict[str, Any]:
+        return (
+            self._service.courses()
+            .topics()
+            .create(courseId=course_id, body={"name": name})
+            .execute()
+        )
+
+    def create_coursework_material(
+        self,
+        course_id: str,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        return (
+            self._service.courses()
+            .courseWorkMaterials()
+            .create(courseId=course_id, body=body)
+            .execute()
+        )
+
+    def create_coursework(
+        self,
+        course_id: str,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        return (
+            self._service.courses()
+            .courseWork()
+            .create(courseId=course_id, body=body)
+            .execute()
+        )
+
     @staticmethod
     def _collect_paginated(
         item_key: str,

@@ -93,6 +93,16 @@ const state = {
   postMessageTone: "success",
   oauthDialog: { ...emptyOAuthDialog },
   oauthSetup: { ...emptyOAuthSetup },
+  calendarEvents: [],
+  selectedCalendarEventId: "",
+  lessonBundle: null,
+  lessonAiInput: null,
+  lessonDriveQuery: "trashed = false",
+  lessonIncludeTranscripts: false,
+  lessonItemKind: "material",
+  lessonItemTitle: "",
+  lessonMessage: "",
+  lessonMessageTone: "success",
 };
 
 state.agentOutput = normalizeAgentOutput(buildPlaceholderOutput());
@@ -862,6 +872,70 @@ function renderDashboard() {
       <p>${escapeHtml(state.agentOutput.summary.shortSummary)}</p>
       <p class="subtle">${escapeHtml(state.agentOutput.summary.recommendedAction)}</p>
     </section>
+    ${renderLessonWorkspace()}
+  `;
+}
+
+function renderLessonWorkspace() {
+  const bundle = state.lessonBundle;
+  const sources = bundle?.driveSources ?? [];
+  const topicName = bundle?.topic?.name ?? "授業Topic未確定";
+  const itemTitle = state.lessonItemTitle || `${topicName} 資料`;
+  return `
+    <section class="band lesson-workspace">
+      <div class="section-heading">
+        <div>
+          <h2>授業ナレッジ統合</h2>
+          <p class="subtle">Calendar、Drive、Classroomを授業単位で結び、教師確認後にTopicへ整理します。</p>
+        </div>
+        <span class="badge">LessonBundle</span>
+      </div>
+      <div class="grid cols-2">
+        <div class="field">
+          <label for="lesson-calendar-event">Calendarの授業予定</label>
+          <select id="lesson-calendar-event" data-lesson-event>
+            <option value="">授業予定を取得してください</option>
+            ${state.calendarEvents
+              .map(
+                (event) => `
+                  <option value="${escapeHtml(event.id ?? "")}" ${event.id === state.selectedCalendarEventId ? "selected" : ""}>
+                    ${escapeHtml(event.summary ?? event.id ?? "無題の予定")}
+                  </option>
+                `,
+              )
+              .join("")}
+          </select>
+        </div>
+        <div class="field">
+          <label for="lesson-drive-query">Drive検索条件</label>
+          <input id="lesson-drive-query" data-lesson-drive-query value="${escapeHtml(state.lessonDriveQuery)}" />
+          <p class="subtle">例: <code>name contains '第3回'</code></p>
+        </div>
+      </div>
+      <div class="action-row">
+        <button class="button" data-action="load-calendar-events">Calendar予定を取得</button>
+        <button class="button primary" data-action="load-lesson-bundle" ${state.selectedCalendarEventId ? "" : "disabled"}>授業データを統合</button>
+        <label class="checkbox-label"><input type="checkbox" data-lesson-transcripts ${state.lessonIncludeTranscripts ? "checked" : ""} /> 文字起こし本文も取得</label>
+      </div>
+      ${
+        bundle
+          ? `<div class="card lesson-bundle-card">
+              <div class="card-header">
+                <h3>${escapeHtml(topicName)}</h3>
+                <span class="badge ${bundle.publication?.status === "ready" ? "success" : "warning"}">${escapeHtml(bundle.publication?.status ?? "draft")}</span>
+              </div>
+              <p class="subtle">Drive ${sources.length}件 / Classroom ${bundle.classroomItems?.length ?? 0}件 / AIチャンク ${state.lessonAiInput?.chunks?.length ?? 0}件</p>
+              ${sources.length > 0 ? `<ul class="source-list">${sources.map((source) => `<li><span class="badge">${escapeHtml(source.kind)}</span> <a href="${escapeHtml(source.url || "#")}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.title)}</a></li>`).join("")}</ul>` : renderInlineEmpty("Drive資料がありません。検索条件を確認してください。")}
+              <div class="grid cols-2" style="margin-top: 16px">
+                <div class="field"><label for="lesson-item-title">Classroom公開タイトル</label><input id="lesson-item-title" data-lesson-item-title value="${escapeHtml(itemTitle)}" /></div>
+                <div class="field"><label for="lesson-item-kind">公開形式</label><select id="lesson-item-kind" data-lesson-item-kind><option value="material" ${state.lessonItemKind === "material" ? "selected" : ""}>教材として公開</option><option value="assignment" ${state.lessonItemKind === "assignment" ? "selected" : ""}>課題として公開</option></select></div>
+              </div>
+              <div class="action-row" style="margin-top: 16px"><button class="button primary" data-action="publish-lesson" ${sources.length > 0 ? "" : "disabled"}>教師承認してClassroomへ公開</button></div>
+            </div>`
+          : renderInlineEmpty("Calendar予定を選び、授業データを統合してください。")
+      }
+      ${state.lessonMessage ? renderAlert(state.lessonMessageTone, state.lessonMessage) : ""}
+    </section>
   `;
 }
 
@@ -1276,6 +1350,20 @@ function renderConfirm() {
 }
 
 function oauthIntentCopy(intent) {
+  if (intent === "lesson_read") {
+    return {
+      title: "授業データの読み取りを許可してください",
+      description:
+        "Calendarの授業予定、Driveの録画・資料、Classroomの課題・教材を授業単位で統合するための読み取り権限が必要です。",
+    };
+  }
+  if (intent === "lesson_publish") {
+    return {
+      title: "授業データのClassroom公開を許可してください",
+      description:
+        "教師が確認した授業資料や課題をClassroomのTopicへ公開するための権限が必要です。",
+    };
+  }
   if (intent === "post") {
     return {
       title: "Classroom 投稿権限を許可してください",
@@ -1391,6 +1479,11 @@ async function logoutGoogle() {
   state.selectedCourseId = "";
   state.selectedAssignmentId = "";
   state.agentOutput = normalizeAgentOutput(buildPlaceholderOutput());
+  state.calendarEvents = [];
+  state.selectedCalendarEventId = "";
+  state.lessonBundle = null;
+  state.lessonAiInput = null;
+  state.lessonMessage = "";
   resetEditableValues();
   await refreshOAuthSetup();
   render();
@@ -1751,6 +1844,128 @@ async function loadReminderGeneration(
   }
 }
 
+async function loadCalendarEvents() {
+  try {
+    await ensureGoogleAuthorization("lesson_read");
+  } catch (error) {
+    if (!error?.cancelled) {
+      state.lessonMessage = error?.message ?? "Calendar読み取り権限を許可してください。";
+      state.lessonMessageTone = "danger";
+      render();
+    }
+    return;
+  }
+  setLoading("Calendarの授業予定を取得しています。");
+  try {
+    const now = new Date();
+    const start = new Date(now);
+    start.setDate(start.getDate() - 90);
+    const end = new Date(now);
+    end.setDate(end.getDate() + 90);
+    const params = new URLSearchParams({
+      timeMin: start.toISOString(),
+      timeMax: end.toISOString(),
+    });
+    const payload = await apiFetchJson(`/api/live/calendar-events?${params}`);
+    state.calendarEvents = Array.isArray(payload.items) ? payload.items : [];
+    state.selectedCalendarEventId = state.calendarEvents[0]?.id ?? "";
+    state.lessonMessage = `${state.calendarEvents.length}件の授業予定を取得しました。`;
+    state.lessonMessageTone = "success";
+  } catch (error) {
+    state.lessonMessage = error?.message ?? "Calendar予定を取得できませんでした。";
+    state.lessonMessageTone = "danger";
+  }
+  clearLoading();
+  render();
+}
+
+async function loadLessonBundle() {
+  if (!state.selectedCourseId || !state.selectedCalendarEventId) {
+    state.lessonMessage = "コースとCalendar予定を選択してください。";
+    state.lessonMessageTone = "danger";
+    render();
+    return;
+  }
+  try {
+    await ensureGoogleAuthorization("lesson_read");
+  } catch (error) {
+    if (!error?.cancelled) {
+      state.lessonMessage = error?.message ?? "授業データの読み取り権限を許可してください。";
+      state.lessonMessageTone = "danger";
+      render();
+    }
+    return;
+  }
+  setLoading("Calendar・Drive・Classroomを統合しています。");
+  try {
+    const params = new URLSearchParams({
+      courseId: state.selectedCourseId,
+      calendarEventId: state.selectedCalendarEventId,
+      driveQuery: state.lessonDriveQuery,
+      includeTranscripts: state.lessonIncludeTranscripts ? "true" : "false",
+    });
+    const payload = await apiFetchJson(`/api/live/lesson-bundle?${params}`);
+    state.lessonBundle = payload.bundle;
+    state.lessonAiInput = payload.aiInput;
+    state.lessonItemTitle = payload.bundle?.topic?.name
+      ? `${payload.bundle.topic.name} 資料`
+      : "授業資料";
+    state.lessonMessage = "授業データを統合しました。内容を確認してから公開してください。";
+    state.lessonMessageTone = "success";
+  } catch (error) {
+    state.lessonMessage = error?.message ?? "授業データを統合できませんでした。";
+    state.lessonMessageTone = "danger";
+  }
+  clearLoading();
+  render();
+}
+
+async function publishLesson() {
+  const sources = state.lessonBundle?.driveSources ?? [];
+  if (!sources.length) {
+    state.lessonMessage = "公開対象のDrive資料がありません。";
+    state.lessonMessageTone = "danger";
+    render();
+    return;
+  }
+  try {
+    await ensureGoogleAuthorization("lesson_publish");
+  } catch (error) {
+    if (!error?.cancelled) {
+      state.lessonMessage = error?.message ?? "Classroom公開権限を許可してください。";
+      state.lessonMessageTone = "danger";
+      render();
+    }
+    return;
+  }
+  setLoading("教師承認を反映してClassroomへ公開しています。");
+  try {
+    const payload = await apiFetchJson("/api/live/lesson-publish", {
+      method: "POST",
+      body: JSON.stringify({
+        approved: true,
+        courseId: state.selectedCourseId,
+        calendarEventId: state.selectedCalendarEventId,
+        driveQuery: state.lessonDriveQuery,
+        items: [
+          {
+            kind: state.lessonItemKind,
+            title: state.lessonItemTitle || "授業資料",
+            sourceIds: sources.map((source) => source.sourceId),
+          },
+        ],
+      }),
+    });
+    state.lessonMessage = `Classroomへ公開しました。Topic: ${payload.topicName ?? "作成済み"}`;
+    state.lessonMessageTone = "success";
+  } catch (error) {
+    state.lessonMessage = error?.message ?? "Classroomへの公開に失敗しました。";
+    state.lessonMessageTone = "danger";
+  }
+  clearLoading();
+  render();
+}
+
 async function retryCurrentView() {
   if (!state.isLoggedIn) {
     await connectGoogle();
@@ -1886,6 +2101,54 @@ function bindEvents() {
       void loadReminderGeneration(state.selectedCourseId, state.selectedAssignmentId, {
         nextView: "review",
       });
+    });
+  });
+
+  document.querySelectorAll("[data-action='load-calendar-events']").forEach((button) => {
+    button.addEventListener("click", () => {
+      void loadCalendarEvents();
+    });
+  });
+
+  document.querySelectorAll("[data-action='load-lesson-bundle']").forEach((button) => {
+    button.addEventListener("click", () => {
+      void loadLessonBundle();
+    });
+  });
+
+  document.querySelectorAll("[data-action='publish-lesson']").forEach((button) => {
+    button.addEventListener("click", () => {
+      void publishLesson();
+    });
+  });
+
+  document.querySelectorAll("[data-lesson-event]").forEach((input) => {
+    input.addEventListener("change", () => {
+      state.selectedCalendarEventId = input.value;
+    });
+  });
+
+  document.querySelectorAll("[data-lesson-drive-query]").forEach((input) => {
+    input.addEventListener("input", () => {
+      state.lessonDriveQuery = input.value;
+    });
+  });
+
+  document.querySelectorAll("[data-lesson-transcripts]").forEach((input) => {
+    input.addEventListener("change", () => {
+      state.lessonIncludeTranscripts = input.checked;
+    });
+  });
+
+  document.querySelectorAll("[data-lesson-item-title]").forEach((input) => {
+    input.addEventListener("input", () => {
+      state.lessonItemTitle = input.value;
+    });
+  });
+
+  document.querySelectorAll("[data-lesson-item-kind]").forEach((input) => {
+    input.addEventListener("change", () => {
+      state.lessonItemKind = input.value;
     });
   });
 

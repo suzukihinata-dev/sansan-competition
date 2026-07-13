@@ -47,12 +47,15 @@ from sansan_competition.oauth import (
     complete_google_oauth_authorization,
     default_classroom_post_scopes,
     default_classroom_read_scopes,
+    default_lesson_publish_scopes,
+    default_lesson_read_scopes,
     inspect_google_oauth_client,
     load_google_user_credentials,
     resolve_google_oauth_runtime_plan,
     save_google_oauth_client_file,
     start_google_oauth_authorization,
 )
+from sansan_competition.workspace import GoogleCalendarClient, GoogleDriveClient, GoogleWorkspaceLessonClient
 
 
 ROOT = Path(__file__).resolve().parent
@@ -67,6 +70,8 @@ OAUTH_BROWSER_SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 OAUTH_INTENT_SCOPES = {
     "read": default_classroom_read_scopes(),
     "post": default_classroom_post_scopes(),
+    "lesson_read": default_lesson_read_scopes(),
+    "lesson_publish": default_lesson_publish_scopes(),
 }
 OAUTH_SESSIONS: dict[str, dict[str, Any]] = {}
 OAUTH_SESSIONS_LOCK = threading.Lock()
@@ -328,6 +333,17 @@ def build_live_request_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
 
+def _query_first(query: dict[str, list[str]], key: str) -> str | None:
+    values = query.get(key) or []
+    value = values[0].strip() if values else ""
+    return value or None
+
+
+def _query_bool(query: dict[str, list[str]], key: str) -> bool:
+    value = (_query_first(query, key) or "").casefold()
+    return value in {"1", "true", "yes", "on"}
+
+
 def build_course_list_payload(courses: list[Course]) -> dict[str, object]:
     items = sorted(
         (course.to_contract() for course in courses),
@@ -574,6 +590,15 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
         if parsed.path == "/api/live/reminder-generation":
             self._handle_reminder_generation(parsed)
             return
+        if parsed.path == "/api/live/calendar-events":
+            self._handle_calendar_events(parsed)
+            return
+        if parsed.path == "/api/live/drive-files":
+            self._handle_drive_files(parsed)
+            return
+        if parsed.path == "/api/live/lesson-bundle":
+            self._handle_lesson_bundle(parsed)
+            return
         super().do_GET()
 
     def do_POST(self) -> None:
@@ -586,6 +611,9 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/live/post-reminder":
             self._handle_post_reminder()
+            return
+        if parsed.path == "/api/live/lesson-publish":
+            self._handle_lesson_publish()
             return
         self.send_error(404, "Not Found")
 
@@ -772,6 +800,174 @@ class ClassroomPrototypeHandler(http.server.SimpleHTTPRequestHandler):
                     "alternateLink": announcement.get("alternateLink"),
                 },
             )
+        except Exception as exc:
+            error = resolve_agent_error(exc, fallback_code=ErrorCode.CLASSROOM_POST_FAILED)
+            self._send_json(
+                500,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "status": "error",
+                    "error": error.to_error_item(),
+                },
+            )
+
+    def _handle_calendar_events(self, parsed: Any) -> None:
+        request_id = build_live_request_id("calendar_events")
+        try:
+            client = GoogleCalendarClient.from_oauth(
+                oauth_config=self._browser_oauth_config(),
+                allow_interactive=False,
+                scopes=OAUTH_INTENT_SCOPES["lesson_read"],
+            )
+            query = parse_qs(parsed.query)
+            events = client.list_events(
+                calendar_id=_query_first(query, "calendarId") or "primary",
+                time_min=_query_first(query, "timeMin"),
+                time_max=_query_first(query, "timeMax"),
+                query=_query_first(query, "q"),
+            )
+            self._send_json(
+                200,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "items": events,
+                },
+            )
+        except Exception as exc:
+            error = resolve_agent_error(
+                exc,
+                fallback_code=ErrorCode.CLASSROOM_API_PERMISSION_DENIED,
+            )
+            self._send_json(
+                500,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "items": [],
+                    "error": error.to_error_item(),
+                },
+            )
+
+    def _handle_drive_files(self, parsed: Any) -> None:
+        request_id = build_live_request_id("drive_files")
+        try:
+            query = parse_qs(parsed.query)
+            client = GoogleDriveClient.from_oauth(
+                oauth_config=self._browser_oauth_config(),
+                allow_interactive=False,
+                scopes=OAUTH_INTENT_SCOPES["lesson_read"],
+            )
+            files = client.list_files(
+                query=_query_first(query, "q") or "trashed = false",
+            )
+            self._send_json(
+                200,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "items": files,
+                },
+            )
+        except Exception as exc:
+            error = resolve_agent_error(
+                exc,
+                fallback_code=ErrorCode.CLASSROOM_API_PERMISSION_DENIED,
+            )
+            self._send_json(
+                500,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "items": [],
+                    "error": error.to_error_item(),
+                },
+            )
+
+    def _handle_lesson_bundle(self, parsed: Any) -> None:
+        request_id = build_live_request_id("lesson_bundle")
+        course_id = self._require_query_value(parsed, "courseId")
+        calendar_event_id = self._require_query_value(parsed, "calendarEventId")
+        if course_id is None or calendar_event_id is None:
+            return
+        query = parse_qs(parsed.query)
+        try:
+            client = GoogleWorkspaceLessonClient.from_oauth(
+                oauth_config=self._browser_oauth_config(),
+                allow_interactive=False,
+                publish=False,
+            )
+            bundle, ai_payload = client.assemble_bundle(
+                course_id=course_id,
+                calendar_event_id=calendar_event_id,
+                calendar_id=_query_first(query, "calendarId") or "primary",
+                drive_query=_query_first(query, "driveQuery") or "trashed = false",
+                include_transcripts=_query_bool(query, "includeTranscripts"),
+            )
+            self._send_json(
+                200,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "status": bundle.publication_status,
+                    "bundle": bundle.to_dict(),
+                    "aiInput": ai_payload,
+                },
+            )
+        except Exception as exc:
+            error = resolve_agent_error(
+                exc,
+                fallback_code=ErrorCode.CLASSROOM_API_PERMISSION_DENIED,
+            )
+            self._send_json(
+                500,
+                {
+                    "requestId": request_id,
+                    "generatedAt": datetime.now(JST).isoformat(timespec="seconds"),
+                    "status": "error",
+                    "bundle": None,
+                    "aiInput": None,
+                    "error": error.to_error_item(),
+                },
+            )
+
+    def _handle_lesson_publish(self) -> None:
+        request_id = build_live_request_id("lesson_publish")
+        try:
+            body = self._read_json_body()
+            approved = bool(body.get("approved"))
+            if not approved:
+                raise AgentError(
+                    ErrorCode.CLASSROOM_POST_FAILED,
+                    message="教師承認フラグがないため、授業資料の公開を実行しませんでした。",
+                    recoverable=True,
+                )
+            course_id = str(body.get("courseId") or "").strip()
+            calendar_event_id = str(body.get("calendarEventId") or "").strip()
+            items = body.get("items")
+            if not course_id or not calendar_event_id or not isinstance(items, list):
+                raise AgentError(
+                    ErrorCode.INVALID_AGENT_OUTPUT,
+                    message="courseId、calendarEventId、itemsが必要です。",
+                    recoverable=False,
+                )
+            client = GoogleWorkspaceLessonClient.from_oauth(
+                oauth_config=self._browser_oauth_config(),
+                allow_interactive=False,
+                publish=True,
+            )
+            bundle, _ = client.assemble_bundle(
+                course_id=course_id,
+                calendar_event_id=calendar_event_id,
+                calendar_id=str(body.get("calendarId") or "primary"),
+                drive_query=str(body.get("driveQuery") or "trashed = false"),
+                include_transcripts=False,
+            )
+            result = client.publish(bundle=bundle, items=items, approved=True)
+            result["requestId"] = request_id
+            result["generatedAt"] = datetime.now(JST).isoformat(timespec="seconds")
+            self._send_json(200, result)
         except Exception as exc:
             error = resolve_agent_error(exc, fallback_code=ErrorCode.CLASSROOM_POST_FAILED)
             self._send_json(

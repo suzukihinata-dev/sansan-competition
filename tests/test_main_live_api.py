@@ -253,6 +253,89 @@ class LiveApiTests(unittest.TestCase):
         self.assertEqual(payload["items"], [])
         self.assertEqual(payload["error"]["code"], "CLASSROOM_API_NOT_FOUND")
 
+    def test_calendar_events_endpoint_uses_lesson_read_client(self) -> None:
+        class FakeCalendarClient:
+            def list_events(self, **kwargs):
+                self.kwargs = kwargs
+                return [{"id": "event-001", "summary": "情報I 第3回"}]
+
+        fake_client = FakeCalendarClient()
+        with patch.object(
+            app_main.GoogleCalendarClient,
+            "from_oauth",
+            return_value=fake_client,
+        ) as factory:
+            status_code, payload = self._request_json(
+                "/api/live/calendar-events?timeMin=2026-07-01T00%3A00%3A00Z&calendarId=primary"
+            )
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["items"][0]["id"], "event-001")
+        self.assertEqual(fake_client.kwargs["calendar_id"], "primary")
+        self.assertEqual(factory.call_args.kwargs["scopes"], app_main.OAUTH_INTENT_SCOPES["lesson_read"])
+
+    def test_drive_files_endpoint_returns_source_metadata(self) -> None:
+        class FakeDriveClient:
+            def list_files(self, **kwargs):
+                self.query = kwargs["query"]
+                return [{"id": "file-001", "name": "第3回資料.pdf"}]
+
+        fake_client = FakeDriveClient()
+        with patch.object(
+            app_main.GoogleDriveClient,
+            "from_oauth",
+            return_value=fake_client,
+        ):
+            status_code, payload = self._request_json(
+                "/api/live/drive-files?q=name%20contains%20%27%E7%AC%AC3%E5%9B%9E%27"
+            )
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["items"][0]["id"], "file-001")
+        self.assertEqual(fake_client.query, "name contains '第3回'")
+
+    def test_lesson_bundle_endpoint_returns_bundle_and_ai_input(self) -> None:
+        class FakeWorkspaceClient:
+            def assemble_bundle(self, **kwargs):
+                self.kwargs = kwargs
+                bundle = types.SimpleNamespace(
+                    publication_status="ready",
+                    to_dict=lambda: {"lessonId": "lesson-001"},
+                )
+                return bundle, {"lessonId": "lesson-001", "chunks": []}
+
+        fake_client = FakeWorkspaceClient()
+        with patch.object(
+            app_main.GoogleWorkspaceLessonClient,
+            "from_oauth",
+            return_value=fake_client,
+        ):
+            status_code, payload = self._request_json(
+                "/api/live/lesson-bundle?courseId=course-001&calendarEventId=event-001"
+            )
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(payload["bundle"]["lessonId"], "lesson-001")
+        self.assertEqual(payload["aiInput"]["chunks"], [])
+        self.assertEqual(fake_client.kwargs["course_id"], "course-001")
+
+    def test_lesson_publish_requires_approval_without_touching_google_api(self) -> None:
+        with patch.object(app_main.GoogleWorkspaceLessonClient, "from_oauth") as factory:
+            status_code, payload = self._request_json(
+                "/api/live/lesson-publish",
+                method="POST",
+                payload={
+                    "approved": False,
+                    "courseId": "course-001",
+                    "calendarEventId": "event-001",
+                    "items": [],
+                },
+            )
+
+        self.assertEqual(status_code, 500)
+        self.assertEqual(payload["error"]["code"], "CLASSROOM_POST_FAILED")
+        factory.assert_not_called()
+
     def test_oauth_start_reports_authorized_when_cached_token_is_ready(self) -> None:
         with (
             patch.object(

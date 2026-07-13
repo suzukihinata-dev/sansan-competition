@@ -32,6 +32,12 @@ class StaticAssetTests(unittest.TestCase):
             "/api/live/submission-analysis",
             "/api/live/reminder-generation",
             "/api/live/post-reminder",
+            "/api/live/calendar-events",
+            "/api/live/lesson-bundle",
+            "/api/live/lesson-publish",
+            "授業ナレッジ統合",
+            "lesson_read",
+            "lesson_publish",
             "buildEditedReminderPayload",
             "Google Classroomに接続",
             "OAuth client JSON を選択",
@@ -72,6 +78,9 @@ class StaticAssetTests(unittest.TestCase):
         self.assertIn("SimpleHTTPRequestHandler", main_py)
         self.assertIn("ClassroomPrototypeHandler", main_py)
         self.assertIn("/api/live/courses", main_py)
+
+    def test_lesson_bundle_schema_exists(self) -> None:
+        self.assertTrue((ROOT / "schemas/lesson-bundle-v1.0.0.json").is_file())
 
 
 if __name__ == "__main__":
